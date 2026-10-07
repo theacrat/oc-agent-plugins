@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -34,6 +34,21 @@ const entriesFrom = (output: readonly string[]): readonly unknown[] => {
 };
 
 describe("managed CLI lifecycle", () => {
+  it.each(["node_modules", ".git", "nested"])(
+    "protects newly added %s contents",
+    async (folder) => {
+      const source = await makeTree({ "plugin.json": manifest() });
+      const project = await makeTree({ "README.md": "Project" });
+      await invoke(project, ["install", source]);
+      const added = path.join(project, ".opencode/agent-plugins/demo", folder);
+      await mkdir(added);
+      const filename = folder === "nested" ? ".oc-agent-plugin.json" : "user-work.txt";
+      await writeFile(path.join(added, filename), "Keep this");
+      await expect(invoke(project, ["update", "demo"])).rejects.toThrow("edited");
+      await expect(invoke(project, ["uninstall", "demo"])).rejects.toThrow("local edits");
+      expect(await readFile(path.join(added, filename), "utf8")).toBe("Keep this");
+    },
+  );
   it("installs and updates local snapshots while preserving disabled state and runtime data", async () => {
     const source = await makeTree({
       "plugin.json": manifest(),

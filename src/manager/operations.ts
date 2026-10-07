@@ -73,7 +73,7 @@ const createManager = (root: string, cwd: string): Manager => ({
       throw new Error("Missing managed receipt");
     }
     return withSource(receipt.source, async (acquired) =>
-      update(root, name, acquired, dependencies),
+      update(root, name, acquired, dependencies, receipt),
     );
   },
 });

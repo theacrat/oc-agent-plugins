@@ -32,6 +32,8 @@ The CLI does not start OpenCode, connect MCP servers, execute package scripts or
 
 Node 22.14 or newer is required. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs are supported; archives, npm packages and submodules are not installation sources.
 
+Source symlinks and special files are rejected. On Linux, reads also verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against an adversarial process repeatedly swapping parent directories on other platforms; do not install or update local folders that an untrusted process can concurrently modify.
+
 An interrupted mutation fails closed. `doctor` reports the adjacent `.agent-plugins-manager` state directory; the CLI does not automatically break locks or delete journals/backups. Before manual recovery, stop concurrent CLI commands, preserve that directory and inspect the journal's source, target and backup paths. Do not delete a lock just because it looks old. Disabled snapshots live in the adjacent `.agent-plugins-disabled` directory.
 
 Once published on npm, add `oc-agent-plugins` to OpenCode's `plugins` array. The public source is [theacrat/oc-agent-plugins](https://github.com/theacrat/oc-agent-plugins).
