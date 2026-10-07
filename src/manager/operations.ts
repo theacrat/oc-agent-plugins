@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -23,9 +23,7 @@ const withSource = async <Result>(
   source: Source,
   run: (acquired: AcquiredSource) => Promise<Result>,
 ): Promise<Result> => {
-  const parent = path.join(tmpdir(), "oc-agent-plugins");
-  await mkdir(parent, { recursive: true });
-  const scratch = await mkdtemp(path.join(parent, "acquire-"));
+  const scratch = await mkdtemp(path.join(tmpdir(), "oc-agent-plugins-acquire-"));
   try {
     const acquired = await acquireSource(source, scratch);
     try {
