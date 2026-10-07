@@ -9,7 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fingerprintDirectory } from "#src/manager/fingerprint.ts";
 import { readMetadata } from "#src/manager/metadata.ts";
+import { validateReceipt } from "#src/manager/receipt.ts";
 import { snapshotDirectory } from "#src/manager/snapshot.ts";
+// This integration suite exercises every source boundary and the receipt policy.
+// eslint-disable-next-line import/max-dependencies
 import { acquireSource, parseSource } from "#src/manager/source.ts";
 import type { Source } from "#src/manager/types.ts";
 
@@ -26,6 +29,13 @@ const fixture = async (): Promise<string> => {
   return root;
 };
 const manifest = JSON.stringify({ $schema: PLUGIN_SCHEMA, name: "sample" });
+const receipt = (source: unknown): unknown => ({
+  fingerprint: "test",
+  format: "agent-plugins",
+  name: "sample",
+  schemaVersion: 1,
+  source,
+});
 // execFile's custom promisify overload returns stdout despite its void callback signature.
 // eslint-disable-next-line typescript/strict-void-return
 const executeFile = promisify(execFile);
@@ -64,6 +74,98 @@ afterEach(async () => {
 });
 
 describe("manager sources", () => {
+  it("uses the same public source policy for parsing and receipts", async () => {
+    const root = await fixture();
+    await Promise.all(
+      [
+        "https://github.com/owner/repo.git",
+        "ssh://git@github.com/owner/repo.git",
+        "git@github.com:owner/repo.git",
+      ].map(async (url) => {
+        const source = await parseSource(url, {
+          cwd: root,
+          ref: "feature/test",
+          subdir: "plugins/example",
+        });
+        expect(() => {
+          validateReceipt(receipt(source));
+        }).not.toThrow();
+      }),
+    );
+    const invalid: Extract<Source, { kind: "git" }>[] = [
+      { kind: "git", url: "https://alice:SECRET@github.com/repo.git" },
+      { kind: "git", url: "ssh://git:SECRET@github.com/repo.git" },
+      { kind: "git", url: "ext::SECRET" },
+      { kind: "git", url: "file:///SECRET" },
+      ...["--bad", "a..b", "a//b", "a.lock", "a/.hidden"].map((ref) => ({
+        kind: "git" as const,
+        ref,
+        url: "https://github.com/o/r.git",
+      })),
+      ...[".git", "node_modules/plugin", RECEIPT, "a/../b", "a//b", "./a", String.raw`a\b`].map(
+        (subdir) => ({ kind: "git" as const, subdir, url: "https://github.com/o/r.git" }),
+      ),
+    ];
+    await Promise.all(
+      invalid.map(async (source) => {
+        await expect(
+          parseSource(source.url, {
+            cwd: root,
+            ...(source.ref === undefined ? {} : { ref: source.ref }),
+            ...(source.subdir === undefined ? {} : { subdir: source.subdir }),
+          }),
+        ).rejects.toThrow();
+        expect(() => {
+          validateReceipt(receipt(source));
+        }).toThrow();
+        expect(() => {
+          validateReceipt(receipt(source));
+        }).not.toThrow("SECRET");
+        if (!source.url.startsWith("file:")) {
+          await expect(acquireSource(source, join(root, "scratch"))).rejects.toThrow();
+          await expect(acquireSource(source, join(root, "scratch"))).rejects.not.toThrow("SECRET");
+        }
+      }),
+    );
+    for (const source of [
+      { kind: "git", ref: 42, url: "https://github.com/o/r" },
+      { kind: "git", subdir: [], url: "https://github.com/o/r" },
+      { extra: true, kind: "git", url: "https://github.com/o/r" },
+    ]) {
+      expect(() => {
+        validateReceipt(receipt(source));
+      }).toThrow();
+    }
+  });
+
+  it("fails closed before opening source files on non-Linux platforms", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "plugin.json"), manifest);
+    const filesystem = await import("node:fs/promises");
+    const opened = vi.mocked(filesystem.open);
+    opened.mockClear();
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    await expect(readMetadata(root)).rejects.toThrow("Secure file containment requires Linux");
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without readable Linux descriptor paths", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "plugin.json"), manifest);
+    const filesystem = await import("node:fs/promises");
+    const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+    vi.mocked(filesystem.realpath).mockImplementation(async (file) => {
+      if (String(file).startsWith("/proc/self/fd/")) {
+        throw new Error("Descriptor paths unavailable");
+      }
+      return actual.realpath(file);
+    });
+    try {
+      await expect(readMetadata(root)).rejects.toThrow("Descriptor paths unavailable");
+    } finally {
+      vi.mocked(filesystem.realpath).mockImplementation(actual.realpath);
+    }
+  });
   it("fingerprints installed additions even in acquisition-excluded locations", async () => {
     const root = await fixture();
     await writeFile(join(root, "plugin.json"), manifest);

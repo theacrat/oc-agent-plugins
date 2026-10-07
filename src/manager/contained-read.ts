@@ -14,6 +14,11 @@ const containedPath = async (path: string, root: string): Promise<void> => {
 };
 
 const openContainedFile = async (path: string, root: string): Promise<FileHandle> => {
+  if (process.platform !== "linux") {
+    throw new Error(
+      "Secure file containment requires Linux with /proc/self/fd; plugin management is unavailable on this platform",
+    );
+  }
   await containedPath(pathModule.dirname(path), root);
   const expected = await lstat(path);
   // Reject a replaced final component and verify the actual opened object before reading bytes.
@@ -24,19 +29,9 @@ const openContainedFile = async (path: string, root: string): Promise<FileHandle
     if (!expected.isFile() || actual.dev !== expected.dev || actual.ino !== expected.ino) {
       throw new Error("Source file changed during acquisition");
     }
-    if (process.platform === "linux") {
-      const opened = await realpath(`/proc/self/fd/${handle.fd}`);
-      if (opened !== path || !opened.startsWith(`${root}${pathModule.sep}`)) {
-        throw new Error("Opened source file escaped its root");
-      }
-    } else {
-      // Node has no portable openat/F_GETPATH API. These identity checks detect replacements,
-      // but an adversarial ABA parent swap is only provably contained by the Linux FD check.
-      await containedPath(pathModule.dirname(path), root);
-      const current = await lstat(path);
-      if (current.dev !== actual.dev || current.ino !== actual.ino) {
-        throw new Error("Source file changed during acquisition");
-      }
+    const opened = await realpath(`/proc/self/fd/${handle.fd}`);
+    if (opened !== path || !opened.startsWith(`${root}${pathModule.sep}`)) {
+      throw new Error("Opened source file escaped its root");
     }
     return handle;
   } catch (error) {

@@ -1,6 +1,7 @@
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { validateGitSource } from "#src/manager/source-policy.ts";
 import { FORMATS } from "#src/types.ts";
 
 import { validateName } from "./paths.ts";
@@ -9,22 +10,6 @@ import type { Receipt, Source } from "./types.ts";
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function validateGitUrl(url: string): void {
-  if (/^git@[a-zA-Z0-9.-]+:[^\s?#]+$/u.test(url)) {
-    return;
-  }
-  const parsed = new URL(url);
-  if (
-    !["https:", "ssh:"].includes(parsed.protocol) ||
-    parsed.password ||
-    (parsed.protocol === "https:" && parsed.username) ||
-    parsed.search ||
-    parsed.hash
-  ) {
-    throw new Error("Unsafe receipt Git URL (credentials and query strings are not stored)");
-  }
 }
 
 function validateSourceReference(value: unknown): asserts value is Source {
@@ -42,25 +27,18 @@ function validateSourceReference(value: unknown): asserts value is Source {
   if (kind !== "git" || typeof url !== "string") {
     throw new Error("Invalid receipt source");
   }
-  validateGitUrl(url);
-  if (
-    ref !== undefined &&
-    (typeof ref !== "string" ||
-      !ref ||
-      /\s/u.test(ref) ||
-      ref.split("").some((character) => (character.codePointAt(0) ?? 0) < 32))
-  ) {
+  if (ref !== undefined && typeof ref !== "string") {
     throw new Error("Invalid receipt ref");
   }
-  if (
-    subdir !== undefined &&
-    (typeof subdir !== "string" ||
-      !subdir ||
-      path.isAbsolute(subdir) ||
-      subdir.split(/[\\/]/u).includes(".."))
-  ) {
+  if (subdir !== undefined && typeof subdir !== "string") {
     throw new Error("Invalid receipt subdirectory");
   }
+  validateGitSource({
+    kind,
+    url,
+    ...(ref === undefined ? {} : { ref }),
+    ...(subdir === undefined ? {} : { subdir }),
+  });
 }
 
 function validateReceipt(value: unknown): asserts value is Receipt {
