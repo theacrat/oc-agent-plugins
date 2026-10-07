@@ -1,4 +1,5 @@
 import type { Format } from "#src/types.ts";
+import type { ResolvedConfiguration } from "#src/vendor/configuration.ts";
 
 type VendorFormat = Exclude<Format, "agent-plugins">;
 
@@ -17,6 +18,7 @@ interface PlaceholderInput {
   readonly root: string;
   readonly dataDir: string;
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly configuration?: ResolvedConfiguration;
 }
 
 // Variable names each vendor substitutes for the plugin root and data directory.
@@ -31,7 +33,8 @@ const NAMES: Readonly<
   cursor: { data: [], root: ["CURSOR_PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT"] },
 };
 
-const PLACEHOLDER = /\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?<fallback>[^}]*))?\}/gu;
+const PLACEHOLDER =
+  /\$\{(?<name>(?:user_config\.)?[A-Za-z_][A-Za-z0-9_]*)(?::-(?<fallback>[^}]*))?\}/gu;
 
 const placeholdersFor = (format: VendorFormat, input: PlaceholderInput): Placeholders => {
   const names = NAMES[format];
@@ -42,6 +45,10 @@ const placeholdersFor = (format: VendorFormat, input: PlaceholderInput): Placeho
   // Claude Code also expands process environment variables, with `${VAR:-default}`.
   const fromEnv = format === "claude";
   const resolve = (match: RegExpExecArray) => {
+    const configured = input.configuration?.expand(match[0]);
+    if (configured !== undefined && configured !== match[0]) {
+      return configured;
+    }
     const name = match.groups?.["name"] ?? "";
     const plugin = known.get(name);
     if (plugin !== undefined) {
@@ -68,19 +75,25 @@ const placeholdersFor = (format: VendorFormat, input: PlaceholderInput): Placeho
     let last = 0;
     for (const match of value.matchAll(PLACEHOLDER)) {
       const name = match.groups?.["name"] ?? "";
-      const replacement = extra[name] ?? known.get(name);
+      const configured = input.configuration?.expandContent(match[0]);
+      const replacement =
+        configured !== undefined && configured !== match[0]
+          ? configured
+          : (extra[name] ?? known.get(name));
       if (replacement === undefined || match.groups?.["fallback"] !== undefined) {
         continue;
       }
       output += value.slice(last, match.index) + replacement;
       last = match.index + match[0].length;
     }
-    return output + value.slice(last);
+    const result = output + value.slice(last);
+    input.configuration?.assertContent(result);
+    return result;
   };
   return {
     expand,
     expandContent,
-    expandRemote: format === "claude",
+    expandRemote: format === "claude" || (format === "cursor" && input.configuration !== undefined),
     processEnv: Object.fromEntries(known),
   };
 };
