@@ -4,23 +4,14 @@ import path from "node:path";
 import { Plugin } from "@opencode/plugin";
 import type { Plugin as PluginTypes } from "@opencode/plugin";
 
-import { forwardAttachments } from "#src/attachments.ts";
 import { loadAll } from "#src/loader.ts";
-import {
-  alwaysRules,
-  formatStatus,
-  scopeComponents,
-  toAgentInfo,
-  toCommands,
-  toServerConfigs,
-  toSkillInfo,
-} from "#src/opencode.ts";
+import { scopeComponents, toAgentInfo, toPolicyServerConfigs, toSkillInfo } from "#src/opencode.ts";
 import { parseOptions } from "#src/options.ts";
 import type { Options } from "#src/options.ts";
-import { addLspExportCommand } from "#src/runtime/lsp.ts";
-import { describeInjections, injectShell, shellRunner } from "#src/shell.ts";
-import { renderCommand } from "#src/template.ts";
-import type { Rendered } from "#src/template.ts";
+import { registerCompatibility } from "#src/runtime/compatibility.ts";
+import { registerMcpPolicies } from "#src/runtime/mcp-policy.ts";
+import { registerCommands } from "#src/runtime/plugin-commands.ts";
+import { resourceScope } from "#src/runtime/resources.ts";
 import type { Diagnostic, LoadResult } from "#src/types.ts";
 
 type Context = PluginTypes.Context;
@@ -36,6 +27,10 @@ const logDiagnostics = (diagnostics: readonly Diagnostic[]) => {
       `[agent-plugins] ${diagnostic.severity}: ${diagnostic.source}: ${diagnostic.message}`,
     );
   }
+};
+
+const report = (diagnostic: Diagnostic) => {
+  logDiagnostics([diagnostic]);
 };
 
 const readOptions = (ctx: Context) => {
@@ -66,103 +61,76 @@ const registerSkillsAndMcp = async (ctx: Context, options: Options, state: State
   }
   if (components.has("mcp")) {
     await ctx.mcp.transform((editor) => {
-      for (const [name, config] of state.current.plugins.flatMap(toServerConfigs)) {
+      for (const [name, config] of state.current.plugins.flatMap(toPolicyServerConfigs)) {
         editor.set(name, config);
-      }
-    });
-  }
-  if (components.has("rules")) {
-    // Always-on rules apply to every agent-loop request, like Cursor's alwaysApply.
-    await ctx.session.hook("context", (event) => {
-      for (const text of state.current.plugins.flatMap(alwaysRules)) {
-        event.system.push({ text, type: "text" });
       }
     });
   }
 };
 
-const runShell = shellRunner(process.env["SHELL"] ?? "/bin/sh");
-
-const registerCommands = async (
-  ctx: Context,
+const loadConfiguredPlugins = async (
   options: Options,
-  state: State,
-  reload: () => Promise<void>,
-) => {
-  // Only Claude-format templates contain `!`cmd`` injections; others render with an empty list.
-  const expandShell = async (rendered: Rendered, sessionID: string) => {
-    if (rendered.shell.length === 0 || !options.shellInjection) {
-      return describeInjections(rendered);
-    }
-    const session = await ctx.session.get({ sessionID });
-    return injectShell(rendered, session.location.directory, AbortSignal.timeout(60_000), runShell);
-  };
-  await ctx.command.transform((editor) => {
-    addLspExportCommand(ctx, editor, () => state.current);
-    editor.add({
-      description: "Rescan Agent Plugins and show what loaded",
-      async execute({ sessionID }) {
-        await reload();
-        await ctx.session.synthetic({
-          resume: false,
-          sessionID,
-          text: formatStatus(state.current, options.searchPaths),
-        });
-      },
-      name: "agent-plugins",
-    });
-    for (const { command, name } of state.current.plugins.flatMap(toCommands)) {
-      editor.add({
-        ...(command.description === undefined ? {} : { description: command.description }),
-        async execute({ delivery, prompt, sessionID }) {
-          const text = await expandShell(renderCommand(command, prompt.text), sessionID);
-          await ctx.session.prompt({ delivery, sessionID, text, ...forwardAttachments(prompt) });
-        },
-        name,
-      });
-    }
+  optionDiagnostics: readonly Diagnostic[],
+): Promise<LoadResult> => {
+  const result = await loadAll(options.searchPaths, {
+    appEndpoints: options.appEndpoints,
+    configuration: options.configuration,
+    dataRoot: options.dataRoot,
+    env: process.env,
+    formats: options.formats,
+    pluginSettings: options.pluginSettings,
+    trustedHooks: options.trustedHooks,
+    ...(options.codexCache === undefined ? {} : { codexCache: options.codexCache }),
   });
+  const loaded = {
+    diagnostics: [...optionDiagnostics, ...result.diagnostics],
+    plugins: result.plugins.map((plugin) => scopeComponents(plugin, options.components)),
+  };
+  logDiagnostics(loaded.diagnostics);
+  return loaded;
 };
 
 export default Plugin.define({
   id: "agent-plugins",
   async setup(ctx) {
     const { diagnostics: optionDiagnostics, options } = readOptions(ctx);
-    const load = async (): Promise<LoadResult> => {
-      const result = await loadAll(options.searchPaths, {
-        appEndpoints: options.appEndpoints,
-        dataRoot: options.dataRoot,
-        env: process.env,
-        formats: options.formats,
-        ...(options.codexCache === undefined ? {} : { codexCache: options.codexCache }),
-      });
-      const loaded = {
-        diagnostics: [...optionDiagnostics, ...result.diagnostics],
-        plugins: result.plugins.map((plugin) => scopeComponents(plugin, options.components)),
-      };
-      logDiagnostics(loaded.diagnostics);
-      return loaded;
-    };
+    const load = async () => loadConfiguredPlugins(options, optionDiagnostics);
     const state: State = { current: await load() };
-    const reload = async () => {
-      state.current = await load();
-      await Promise.all([
-        ctx.skill.reload(),
-        ctx.mcp.reload(),
-        ctx.command.reload(),
-        ctx.agent.reload(),
-      ]);
-    };
-    await registerSkillsAndMcp(ctx, options, state);
-    if (options.components.has("agents")) {
-      await ctx.agent.transform((editor) => {
-        for (const agent of state.current.plugins.flatMap(toAgentInfo)) {
-          editor.update(agent.id, (draft) => {
-            Object.assign(draft, agent);
-          });
-        }
-      });
+
+    const resources = resourceScope();
+    try {
+      resources.own(await registerMcpPolicies(ctx, () => state.current.plugins));
+      const compatibility = resources.own(
+        await registerCompatibility(ctx, options, () => state.current, report),
+      );
+      const reload = async () => {
+        state.current = await load();
+        await compatibility.replace();
+        await Promise.all([
+          ctx.skill.reload(),
+          ctx.mcp.reload(),
+          ctx.command.reload(),
+          ctx.agent.reload(),
+          ctx.tool.reload(),
+        ]);
+      };
+      await registerSkillsAndMcp(ctx, options, state);
+      if (options.components.has("agents")) {
+        await ctx.agent.transform((editor) => {
+          for (const agent of state.current.plugins.flatMap(toAgentInfo)) {
+            editor.update(agent.id, (draft) => {
+              Object.assign(draft, agent);
+            });
+          }
+        });
+      }
+      await registerCommands(ctx, options, state, reload, compatibility);
+      return async () => {
+        await resources.dispose();
+      };
+    } catch (error) {
+      await resources.dispose();
+      throw error;
     }
-    await registerCommands(ctx, options, state, reload);
   },
 });

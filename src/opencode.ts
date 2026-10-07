@@ -116,6 +116,17 @@ const toCommands = (plugin: AgentPlugin): { name: string; command: PluginCommand
 const scopeComponents = (plugin: AgentPlugin, components: ReadonlySet<Component>): AgentPlugin => ({
   ...plugin,
   agents: components.has("agents") ? plugin.agents : [],
+  hooks: components.has("hooks") ? (plugin.hooks ?? []) : [],
+  lsp: components.has("lsp") ? (plugin.lsp ?? {}) : {},
+  styles: components.has("styles") ? (plugin.styles ?? []) : [],
+  ...(plugin.runtimes === undefined
+    ? {}
+    : {
+        runtimes: {
+          ...plugin.runtimes,
+          monitors: components.has("monitors") ? plugin.runtimes.monitors : [],
+        },
+      }),
   commands: components.has("commands") ? plugin.commands : [],
   rules: components.has("rules") ? plugin.rules : [],
   servers: components.has("mcp") ? plugin.servers : {},

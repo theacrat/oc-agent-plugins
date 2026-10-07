@@ -3,18 +3,19 @@ import path from "node:path";
 import type { JsonRecord } from "#src/json.ts";
 import { readText, resolveWithin } from "#src/paths.ts";
 import type { AgentPlugin, Manifest, Report } from "#src/types.ts";
-import { loadAppMappings, reportBlockedRuntimes } from "#src/vendor/bridges.ts";
+import { pluginActivation } from "#src/vendor/activation.ts";
 import type { AppEndpoint } from "#src/vendor/bridges.ts";
-import { loadAgents, loadCommands, loadRules, loadSkills } from "#src/vendor/components.ts";
+import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
+import { loadVendorContents } from "#src/vendor/contents.ts";
 import { SPECS } from "#src/vendor/formats.ts";
 import type { FormatSpec } from "#src/vendor/formats.ts";
-import { expandLsp, loadLsp } from "#src/vendor/lsp.ts";
 import { parseVendorManifest } from "#src/vendor/manifest.ts";
-import { discoverVendorServers } from "#src/vendor/mcp.ts";
-import { placeholdersFor } from "#src/vendor/placeholders.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface VendorLoadOptions {
+  readonly configuration?: Readonly<Record<string, PluginConfigurationOptions>>;
+  readonly trustedHooks?: readonly string[];
+  readonly pluginSettings?: Readonly<Record<string, boolean>>;
   readonly appEndpoints?: Readonly<Record<string, AppEndpoint>>;
   readonly dataRoot: string;
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -53,38 +54,6 @@ const readManifest = async (
   return parsed.ok ? { manifest: parsed.manifest, raw: parsed.raw } : parsed.error;
 };
 
-const reportUnsupported = async (
-  root: string,
-  spec: FormatSpec,
-  raw: JsonRecord,
-  report: Report,
-) => {
-  const fields = spec.unsupported.filter((field) => raw[field] !== undefined);
-  const dirs = await Promise.all(
-    spec.unsupportedDirs.map(async (dir) => {
-      const resolved = await resolveWithin(root, path.join(root, dir));
-      return resolved.kind === "missing" ? undefined : `${dir}/`;
-    }),
-  );
-  const missing = [...new Set([...fields, ...dirs.filter((dir) => dir !== undefined)])];
-  if (missing.length > 0) {
-    report({
-      message: `not implemented by this adapter and ignored: ${missing.join(", ")}`,
-      severity: "warning",
-      source: spec.manifest,
-    });
-  }
-};
-
-const serverSources = (raw: JsonRecord, apps: JsonRecord, spec: FormatSpec) => ({
-  declared:
-    Object.keys(apps).length === 0
-      ? raw["mcpServers"]
-      : [raw["mcpServers"], apps].filter((entry) => entry !== undefined),
-  declaredReplacesDefaults: spec.mcpDeclaredReplaces,
-  defaults: spec.mcpDefaults,
-});
-
 const loadVendorPlugin = async (
   root: string,
   format: VendorFormat,
@@ -97,36 +66,29 @@ const loadVendorPlugin = async (
     return { error: read, ok: false };
   }
   const { manifest, raw } = read;
-  const dataDir = path.join(options.dataRoot, manifest.name);
-  const placeholders = placeholdersFor(format, { dataDir, env: options.env, root });
-  const apps = await loadAppMappings(root, raw["apps"], options.appEndpoints ?? {}, report);
-  // Claude Code substitutes plugin paths in skill and command bodies; Codex and Cursor don't.
-  const expandBody = format === "claude" ? placeholders.expandContent : undefined;
-  const [skills, servers, commands, rules, agents, lsp] = await Promise.all([
-    loadSkills(root, spec, raw, expandBody, report),
-    discoverVendorServers(serverSources(raw, apps, spec), { dataDir, placeholders, root }, report),
-    loadCommands(root, spec, raw, expandBody, report),
-    loadRules(root, spec, raw, report),
-    loadAgents(root, spec, raw, expandBody, report),
-    format === "claude" ? loadLsp(root, raw["lspServers"], report) : Promise.resolve({}),
-    reportBlockedRuntimes(root, raw, report),
-    reportUnsupported(root, spec, raw, report),
-  ]);
-  return {
-    ok: true,
-    plugin: {
-      agents,
-      commands,
-      dataDir,
-      format,
-      lsp: expandLsp(lsp, placeholders.expand),
-      manifest,
-      root,
-      rules,
-      servers,
-      skills,
-    },
-  };
+  const activation = pluginActivation(manifest.name, raw, options.pluginSettings ?? {}, report);
+  if (!activation.enabled) {
+    report({
+      message: activation.reason ?? "plugin disabled",
+      severity: "warning",
+      source: "activation",
+    });
+    return {
+      ok: true,
+      plugin: {
+        agents: [],
+        commands: [],
+        dataDir: path.join(options.dataRoot, manifest.name),
+        format,
+        manifest,
+        root,
+        rules: [],
+        servers: {},
+        skills: [],
+      },
+    };
+  }
+  return loadVendorContents(root, format, manifest, raw, options, report);
 };
 
 const hasVendorManifest = async (root: string, format: VendorFormat) => {

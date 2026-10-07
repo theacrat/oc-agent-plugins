@@ -1,12 +1,20 @@
 import path from "node:path";
 
+import { parseConfigurationOptions } from "#src/config-options.ts";
 import { isRecord, isStringArray, isStringRecord } from "#src/json.ts";
 import { checkHeaders, checkUrl } from "#src/mcp.ts";
 import { COMPONENTS, FORMATS } from "#src/types.ts";
 import type { Component, Diagnostic, Format } from "#src/types.ts";
 import type { AppEndpoint } from "#src/vendor/bridges.ts";
+import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
 
 interface Options {
+  readonly configuration: Readonly<Record<string, PluginConfigurationOptions>>;
+  readonly trustedHooks: readonly string[];
+  readonly trustedMonitors: readonly string[];
+  readonly outputStyle?: string;
+  readonly allowSystemReplacement: boolean;
+  readonly pluginSettings: Readonly<Record<string, boolean>>;
   readonly appEndpoints: Readonly<Record<string, AppEndpoint>>;
   readonly searchPaths: readonly string[];
   readonly codexCache?: string;
@@ -45,7 +53,48 @@ const SCALARS: Readonly<Record<string, ScalarRule>> = {
     valid: (value) => typeof value === "boolean",
   },
 };
-const KNOWN = new Set([...Object.keys(SCALARS), "formats", "components", "appEndpoints"]);
+const KNOWN = new Set([
+  ...Object.keys(SCALARS),
+  "formats",
+  "components",
+  "appEndpoints",
+  "pluginSettings",
+  "configuration",
+  "trustedHooks",
+  "trustedMonitors",
+  "outputStyle",
+  "allowSystemReplacement",
+]);
+
+const parsePluginSettings = (
+  value: unknown,
+  report: (diagnostic: Diagnostic) => void,
+): Record<string, boolean> => {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    report({
+      message: "pluginSettings must map plugin names to booleans",
+      severity: "error",
+      source: "options",
+    });
+    return {};
+  }
+  const settings: Record<string, boolean> = {};
+  for (const [name, enabled] of Object.entries(value)) {
+    if (typeof enabled === "boolean") {
+      settings[name] = enabled;
+    } else {
+      report({
+        message: `pluginSettings.${name} must be true or false`,
+        severity: "error",
+        source: "options",
+      });
+    }
+  }
+  return settings;
+};
 
 const parseAppEndpoints = (
   raw: unknown,
@@ -160,7 +209,13 @@ const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => v
       : []),
   ];
   return {
+    allowSystemReplacement: raw["allowSystemReplacement"] === true,
     appEndpoints: parseAppEndpoints(raw["appEndpoints"], report),
+    configuration: parseConfigurationOptions(raw["configuration"], report),
+    pluginSettings: parsePluginSettings(raw["pluginSettings"], report),
+    trustedHooks: isStringArray(raw["trustedHooks"]) ? raw["trustedHooks"] : [],
+    trustedMonitors: isStringArray(raw["trustedMonitors"]) ? raw["trustedMonitors"] : [],
+    ...(typeof raw["outputStyle"] === "string" ? { outputStyle: raw["outputStyle"] } : {}),
     ...(vendor.codexCache === undefined ? {} : { codexCache: vendor.codexCache }),
     components,
     dataRoot:

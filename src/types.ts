@@ -1,4 +1,8 @@
+import type { ResolvedConfiguration } from "#src/vendor/configuration.ts";
+import type { PluginHook } from "#src/vendor/hooks.ts";
 import type { LspDefinition } from "#src/vendor/lsp.ts";
+import type { PluginOutputStyle } from "#src/vendor/output-styles.ts";
+import type { loadRuntimeComponents } from "#src/vendor/runtimes.ts";
 
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
@@ -7,7 +11,17 @@ const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 const FORMATS = ["agent-plugins", "claude", "codex", "cursor"] as const;
 type Format = (typeof FORMATS)[number];
 
-const COMPONENTS = ["skills", "mcp", "commands", "rules", "agents"] as const;
+const COMPONENTS = [
+  "skills",
+  "mcp",
+  "commands",
+  "rules",
+  "agents",
+  "hooks",
+  "styles",
+  "monitors",
+  "lsp",
+] as const;
 type Component = (typeof COMPONENTS)[number];
 
 interface Diagnostic {
@@ -123,6 +137,10 @@ interface StreamableHttpServer extends ServerOptions {
 type PluginServer = StdioServer | StreamableHttpServer;
 
 interface AgentPlugin {
+  readonly hooks?: readonly PluginHook[];
+  readonly styles?: readonly PluginOutputStyle[];
+  readonly configuration?: ResolvedConfiguration;
+  readonly runtimes?: Awaited<ReturnType<typeof loadRuntimeComponents>>;
   readonly lsp?: Readonly<Record<string, LspDefinition>>;
   readonly format: Format;
   readonly manifest: Manifest;

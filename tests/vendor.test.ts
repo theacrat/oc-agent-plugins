@@ -163,9 +163,9 @@ describe("claude", () => {
         source: "x/.lsp.json",
       },
       {
-        message: "not implemented by this adapter and ignored: hooks/",
-        severity: "warning",
-        source: "x/.claude-plugin/plugin.json",
+        message: "hooks configuration must contain a hooks object",
+        severity: "error",
+        source: "x/hooks/hooks.json",
       },
     ]);
   });
@@ -204,13 +204,13 @@ describe("codex", () => {
       }),
       "skills/one/SKILL.md": skill("one"),
     });
-    const { diagnostics, plugins, root } = await load(dir, undefined, { TOKEN: "secret" });
+    const { diagnostics, plugins } = await load(dir, undefined, { TOKEN: "secret" });
     const server = plugins[0]?.servers["local"];
-    expect(server?.type === "stdio" && server.args).toEqual([`${root}/a`, TOKEN]);
-    expect(server?.type === "stdio" && server.cwd).toBe(root);
+    expect(server).toBeUndefined();
+    expect(plugins[0]?.skills.map((entry) => entry.name)).toEqual(["one"]);
     expect(diagnostics.map((entry) => entry.message)).toEqual([
       "app manifest is missing or escapes the plugin root",
-      "ignoring host-specific fields: enabled, env_vars",
+      "env_vars is not representable: native local MCP inherits the host environment and cannot enforce a vendor whitelist; use an explicitly environment-isolated stdio launcher",
     ]);
   });
 
@@ -272,7 +272,7 @@ describe("cursor", () => {
       ".cursor-plugin/plugin.json": json({
         mcpServers: "./servers.json",
         name: "cur",
-        variables: {},
+        variables: { properties: {}, type: "object" },
       }),
       "mcp.json": json({ mcpServers: { ignored: { command: "x" } } }),
       "rules/always.mdc": "---\nalwaysApply: true\n---\nAlways.",
@@ -290,7 +290,7 @@ describe("cursor", () => {
       ["always", true, []],
       ["ts", false, ["**/*.ts", "**/*.tsx"]],
     ]);
-    expect(sources(diagnostics)).toEqual(["cur/.cursor-plugin/plugin.json"]);
+    expect(sources(diagnostics)).toEqual([]);
   });
 
   it("uses a root SKILL.md as a single-skill plugin", async () => {
@@ -386,7 +386,16 @@ describe("format precedence and toggles", () => {
       },
     );
     expect([...options.formats]).toEqual(["agent-plugins", "codex", "cursor"]);
-    expect([...options.components]).toEqual(["skills", "mcp", "rules", "agents"]);
+    expect([...options.components]).toEqual([
+      "skills",
+      "mcp",
+      "rules",
+      "agents",
+      "hooks",
+      "styles",
+      "monitors",
+      "lsp",
+    ]);
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
       "/p/.agents/plugins",

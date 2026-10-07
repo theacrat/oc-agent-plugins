@@ -1,13 +1,12 @@
 import path from "node:path";
 
-import { parseManifest } from "#src/manifest.ts";
-import { discoverServers } from "#src/mcp.ts";
-import { ensureDir, listDir, readText, realOrSelf, resolveWithin } from "#src/paths.ts";
-import { discoverSkills } from "#src/skills.ts";
+import { loadAgentPlugin } from "#src/agent-plugins-loader.ts";
+import { listDir, realOrSelf, resolveWithin } from "#src/paths.ts";
 import { FORMATS } from "#src/types.ts";
 import type { AgentPlugin, Diagnostic, Format, LoadResult, Report } from "#src/types.ts";
 import type { AppEndpoint } from "#src/vendor/bridges.ts";
 import { codexCachePlugins } from "#src/vendor/codex-cache.ts";
+import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
 import { hasVendorManifest, loadVendorPlugin } from "#src/vendor/loader.ts";
 import {
   hasMarketplace as hasVendorMarketplace,
@@ -17,6 +16,9 @@ import type { MarketplaceEntry } from "#src/vendor/marketplace.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface LoadOptions {
+  readonly configuration?: Readonly<Record<string, PluginConfigurationOptions>>;
+  readonly trustedHooks?: readonly string[];
+  readonly pluginSettings?: Readonly<Record<string, boolean>>;
   readonly appEndpoints?: Readonly<Record<string, AppEndpoint>>;
   readonly dataRoot: string;
   // Codex's versioned install cache; each newest version directory is loaded as a plugin root.
@@ -40,56 +42,28 @@ interface Candidate {
 
 const ALL_FORMATS: ReadonlySet<Format> = new Set(FORMATS);
 
-const manifestWarnings = (warnings: readonly string[], source: string): Diagnostic[] =>
-  warnings.map((message) => ({ message, severity: "warning", source }));
-
-const loadAgentPlugin = async (root: string, options: LoadOptions): Promise<PluginLoad> => {
-  const manifestFile = await resolveWithin(root, path.join(root, "plugin.json"));
-  const reject = (message: string): PluginLoad => ({
-    diagnostics: [{ message, severity: "error", source: root }],
-  });
-  if (manifestFile.kind !== "file") {
-    return reject(
-      manifestFile.kind === "missing"
-        ? "plugin.json not found"
-        : "plugin.json does not resolve to a file inside the plugin root",
+const safeVendorLoad = async (candidate: Candidate, options: LoadOptions, report: Report) => {
+  if (candidate.format === "agent-plugins") {
+    return;
+  }
+  try {
+    return await loadVendorPlugin(
+      candidate.root,
+      candidate.format,
+      {
+        appEndpoints: options.appEndpoints ?? {},
+        configuration: options.configuration ?? {},
+        dataRoot: options.dataRoot,
+        env: options.env ?? {},
+        pluginSettings: options.pluginSettings ?? {},
+        trustedHooks: options.trustedHooks ?? [],
+        ...(candidate.entry === undefined ? {} : { entry: candidate.entry }),
+      },
+      report,
     );
+  } catch {
+    return;
   }
-  const read = await readText(manifestFile.path);
-  const result = read.ok ? parseManifest(read.text) : read;
-  if (!result.ok) {
-    return reject(`plugin rejected: ${result.error}`);
-  }
-  const { manifest } = result;
-  const diagnostics: Diagnostic[] = manifestWarnings(result.warnings, manifest.name);
-  const report: Report = (diagnostic) => {
-    diagnostics.push({ ...diagnostic, source: `${manifest.name}/${diagnostic.source}` });
-  };
-
-  const dataDir = path.join(options.dataRoot, manifest.name);
-  const ctx = { dataDir, platform: options.platform ?? process.platform, root };
-  const [skills, servers] = await Promise.all([
-    discoverSkills(root, report),
-    discoverServers(ctx, report),
-  ]);
-  if (Object.values(servers).some((server) => server.type === "stdio")) {
-    const error = await ensureDir(dataDir);
-    if (error !== undefined) {
-      report({ message: error, severity: "error", source: "mcp.json" });
-    }
-  }
-  const plugin: AgentPlugin = {
-    agents: [],
-    commands: [],
-    dataDir,
-    format: "agent-plugins",
-    manifest,
-    root,
-    rules: [],
-    servers,
-    skills,
-  };
-  return { diagnostics, plugin };
 };
 
 const loadCandidate = async (candidate: Candidate, options: LoadOptions): Promise<PluginLoad> => {
@@ -101,17 +75,20 @@ const loadCandidate = async (candidate: Candidate, options: LoadOptions): Promis
   const report: Report = (diagnostic) => {
     diagnostics.push({ ...diagnostic, source: `${name}/${diagnostic.source}` });
   };
-  const loaded = await loadVendorPlugin(
-    candidate.root,
-    candidate.format,
-    {
-      appEndpoints: options.appEndpoints ?? {},
-      dataRoot: options.dataRoot,
-      env: options.env ?? {},
-      ...(candidate.entry === undefined ? {} : { entry: candidate.entry }),
-    },
-    report,
-  );
+  const loaded = await safeVendorLoad(candidate, options, report);
+  if (loaded === undefined) {
+    return {
+      diagnostics: [
+        ...diagnostics,
+        {
+          message:
+            "plugin configuration or component validation failed; check declared values, required fields and secret body references",
+          severity: "error",
+          source: candidate.root,
+        },
+      ],
+    };
+  }
   if (!loaded.ok) {
     return {
       diagnostics: [
@@ -298,5 +275,5 @@ const loadAll = async (
   return { diagnostics, plugins: [...plugins.values()] };
 };
 
-export type { LoadOptions };
+export type { LoadOptions, PluginLoad };
 export { loadAll, loadPlugin };

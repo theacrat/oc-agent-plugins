@@ -99,6 +99,7 @@ const loadAgents = async (
   raw: JsonRecord,
   expand: ExpandBody,
   report: Report,
+  aliases: Readonly<Record<string, string>> = {},
 ): Promise<PluginAgent[]> => {
   if (!spec.agents) {
     return [];
@@ -108,7 +109,7 @@ const loadAgents = async (
     raw["agents"] === undefined
       ? [path.join(root, "agents")]
       : componentPaths(raw["agents"], root, "agents", report);
-  const agents = await discoverAgents(root, targets, report);
+  const agents = await discoverAgents(root, targets, report, aliases);
   return expand === undefined
     ? agents
     : agents.map((agent) => Object.assign(agent, { system: expand(agent.system) }));

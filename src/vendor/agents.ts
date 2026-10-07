@@ -131,10 +131,26 @@ const colorOf = (value: unknown) => {
 const stepsOf = (value: unknown) =>
   typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 
+const resolveAgentModel = (
+  value: unknown,
+  aliases: Readonly<Record<string, string>>,
+  warn: (message: string) => void,
+) => {
+  const declared = optionalString(value);
+  const model = modelOf(declared === undefined ? undefined : (aliases[declared] ?? declared));
+  if (declared !== undefined && declared !== "inherit" && model === undefined) {
+    warn(
+      `model alias "${declared}" is not an OpenCode provider/model; inheriting the session model`,
+    );
+  }
+  return model;
+};
+
 const loadAgent = async (
   file: { readonly path: string; readonly name: string },
   root: string,
   report: Report,
+  aliases: Readonly<Record<string, string>> = {},
 ): Promise<PluginAgent | undefined> => {
   const source = path.relative(root, file.path);
   const warn = (message: string) => {
@@ -152,13 +168,7 @@ const loadAgent = async (
   }
   const { data } = parsed;
   const description = optionalString(data["description"]);
-  const model = modelOf(data["model"]);
-  const declaredModel = optionalString(data["model"]);
-  if (declaredModel !== undefined && declaredModel !== "inherit" && model === undefined) {
-    warn(
-      `model alias "${declaredModel}" is not an OpenCode provider/model; inheriting the session model`,
-    );
-  }
+  const model = resolveAgentModel(data["model"], aliases, warn);
   const color = colorOf(data["color"]);
   const steps = stepsOf(data["maxTurns"] ?? data["steps"]);
   // Claude's `tools` is an allowlist; `disallowedTools` removes from it.
@@ -189,9 +199,12 @@ const discoverAgents = async (
   root: string,
   targets: readonly string[],
   report: Report,
+  aliases: Readonly<Record<string, string>> = {},
 ): Promise<PluginAgent[]> => {
   const files = await findAll(root, targets, AGENT_EXTENSIONS, report);
-  const agents = await Promise.all(files.map(async (file) => loadAgent(file, root, report)));
+  const agents = await Promise.all(
+    files.map(async (file) => loadAgent(file, root, report, aliases)),
+  );
   return agents.filter((agent) => agent !== undefined);
 };
 
