@@ -12,12 +12,15 @@ const runCli = async (argv: readonly string[], context: CliContext): Promise<num
   const { version } = packageInfo;
   const args = parseArguments(argv);
   if (args.command === "help") {
-    context.stdout(HELP);
+    context.stdout(args.json ? JSON.stringify({ command: "help", help: HELP }) : HELP);
     return 0;
   }
   if (args.command === "version") {
     context.stdout(args.json ? JSON.stringify({ version }) : version);
     return 0;
+  }
+  if (process.platform !== "linux") {
+    throw new Error("Secure package management requires Linux with /proc/self/fd available");
   }
   const location = locations(args, context.cwd, context.home, context.env);
   const manager = createManager(location.root, context.cwd);

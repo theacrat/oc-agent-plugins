@@ -30,9 +30,9 @@ Installations are copied snapshots with ownership receipts and content fingerpri
 
 The CLI does not start OpenCode, connect MCP servers, execute package scripts or grant hooks/monitor trust. You still need to load the OpenCode adapter separately and configure trust explicitly when needed. After changing installations, run `/agent-plugins` in OpenCode to rescan.
 
-Node 22.14 or newer is required. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs are supported; archives, npm packages and submodules are not installation sources.
+Package-management commands require Linux with `/proc/self/fd` available and Node 22.14 or newer. Help and version run on other platforms. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs (including `ssh://git@host/repository.git`) are supported; archives, npm packages and submodules are not installation sources.
 
-Source symlinks and special files are rejected. On Linux, reads also verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against an adversarial process repeatedly swapping parent directories on other platforms; do not install or update local folders that an untrusted process can concurrently modify.
+Source symlinks and special files are rejected. Reads verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against adversarial parent-directory swaps on other platforms, so secure file reads fail closed there rather than use a weaker fallback.
 
 An interrupted mutation fails closed. `doctor` reports the adjacent `.agent-plugins-manager` state directory; the CLI does not automatically break locks or delete journals/backups. Before manual recovery, stop concurrent CLI commands, preserve that directory and inspect the journal's source, target and backup paths. Do not delete a lock just because it looks old. Disabled snapshots live in the adjacent `.agent-plugins-disabled` directory.
 

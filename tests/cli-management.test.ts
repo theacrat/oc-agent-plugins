@@ -34,6 +34,14 @@ const entriesFrom = (output: readonly string[]): readonly unknown[] => {
 };
 
 describe("managed CLI lifecycle", () => {
+  it("returns machine-readable help without reading a package", async () => {
+    const project = await makeTree({ "README.md": "Project" });
+    const result = await invoke(project, ["help", "--json"]);
+    const parsed: unknown = JSON.parse(result.output[0] ?? "{}");
+    expect(isRecord(parsed) && parsed["command"]).toBe("help");
+    expect(isRecord(parsed) && parsed["help"]).toContain("Usage: npx oc-agent-plugins");
+    expect(result.exitCode).toBe(0);
+  });
   it.each(["node_modules", ".git", "nested"])(
     "protects newly added %s contents",
     async (folder) => {
