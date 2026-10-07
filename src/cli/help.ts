@@ -23,7 +23,7 @@ Options:
   --version, -v       Show this CLI's version
 
 Requirements:
-  Linux with /proc/self/fd and Node >=22.14.0 for package management.
+  Linux, macOS or Windows with Node >=22.14.0.
   Git is required only for remote repository sources.
 
 Examples:
