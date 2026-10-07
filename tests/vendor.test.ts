@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { loadAll } from "#src/loader.ts";
 import { parseOptions } from "#src/options.ts";
 import type { Diagnostic, Format } from "#src/types.ts";
-import { compareVersions } from "#src/vendor/codex-cache.ts";
 import { placeholdersFor } from "#src/vendor/placeholders.ts";
 
 import { makeTree, manifest, skill } from "./fixture.ts";
@@ -228,42 +227,6 @@ describe("codex", () => {
       "codex plugin rejected: .codex-plugin/plugin.json not found",
     ]);
   });
-
-  it("loads the newest version from the codex cache", async () => {
-    const cache = await makeTree({
-      "market/tool/1.10.0/.codex-plugin/plugin.json": json({ name: "tool", version: "1.10.0" }),
-      "market/tool/1.9.0/.codex-plugin/plugin.json": json({ name: "tool", version: "1.9.0" }),
-    });
-    const result = await loadAll([], {
-      codexCache: cache,
-      dataRoot: path.join(cache, "data"),
-      env: {},
-    });
-    expect(result.plugins.map((entry) => entry.manifest.version)).toEqual(["1.10.0"]);
-  });
-});
-
-describe("codex cache version order", () => {
-  it("sorts releases above prereleases and non-versions last", () => {
-    const sorted = [
-      "local",
-      "1.0.0-beta",
-      "1.2.0",
-      "1.10.0",
-      "1.0.0",
-      "1.0.0-alpha.10",
-      "1.0.0-alpha.2",
-    ].toSorted(compareVersions);
-    expect(sorted).toEqual([
-      "local",
-      "1.0.0-alpha.2",
-      "1.0.0-alpha.10",
-      "1.0.0-beta",
-      "1.0.0",
-      "1.2.0",
-      "1.10.0",
-    ]);
-  });
 });
 
 describe("cursor", () => {
@@ -375,7 +338,7 @@ describe("format precedence and toggles", () => {
         project: "/p",
         raw: {
           components: { commands: { enabled: false } },
-          discovery: { paths: ["~/plugins", "rel"], vendorDirs: true },
+          discovery: { paths: ["~/plugins", "rel"] },
           formats: { claude: false, nope: true },
           wat: 1,
         },
@@ -398,11 +361,9 @@ describe("format precedence and toggles", () => {
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
       "/p/.agents/plugins",
-      "/home/u/.cursor/plugins/local",
       "/home/u/plugins",
       "/p/rel",
     ]);
-    expect(options.codexCache).toBe("/home/u/.codex/plugins/cache");
     expect(diagnostics.map((entry) => entry.message)).toEqual([
       'unknown option "options.wat"',
       'unknown formats entry "nope"; expected one of agent-plugins, claude, codex, cursor',

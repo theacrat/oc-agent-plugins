@@ -20,7 +20,6 @@ interface Options {
   readonly pluginSettings: Readonly<Record<string, boolean>>;
   readonly appEndpoints: Readonly<Record<string, AppEndpoint>>;
   readonly searchPaths: readonly string[];
-  readonly codexCache?: string;
   readonly dataRoot: string;
   readonly formats: ReadonlySet<Format>;
   readonly components: ReadonlySet<Component>;
@@ -56,10 +55,6 @@ const SCALARS: Readonly<Record<string, ScalarRule>> = {
   paths: { message: "paths must be an array of strings; ignored", valid: isStringArray },
   shellInjection: {
     message: "shellInjection must be true or false; using true",
-    valid: (value) => typeof value === "boolean",
-  },
-  vendorDirs: {
-    message: "vendorDirs must be true or false; ignored",
     valid: (value) => typeof value === "boolean",
   },
 };
@@ -226,16 +221,6 @@ const toggles = <Key extends string>(
   return new Set(keys.filter((key) => value[key] !== false));
 };
 
-// Install caches each vendor reads from, added only when `vendorDirs` is on. Each is a directory
-// of marketplaces or plugins, except Codex's versioned cache, which the loader expands itself.
-const vendorDirectories = (home: string, formats: ReadonlySet<Format>) => ({
-  codexCache: formats.has("codex") ? path.join(home, ".codex", "plugins", "cache") : undefined,
-  searchPaths: [
-    ...(formats.has("claude") ? [path.join(home, ".claude", "plugins", "marketplaces")] : []),
-    ...(formats.has("cursor") ? [path.join(home, ".cursor", "plugins", "local")] : []),
-  ],
-});
-
 const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => void): Options => {
   const { home, project } = input;
   const raw = normaliseSettings(input.raw, report);
@@ -251,15 +236,10 @@ const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => v
       report({ message: rule.message, severity: "error", source: "options" });
     }
   }
-  const { dataDir, paths, shellInjection, vendorDirs } = raw;
-  const vendor =
-    vendorDirs === true
-      ? vendorDirectories(home, formats)
-      : { codexCache: undefined, searchPaths: [] };
+  const { dataDir, paths, shellInjection } = raw;
   const searchPaths = [
     path.join(home, ".agents", "plugins"),
     path.join(project, ".agents", "plugins"),
-    ...vendor.searchPaths,
     ...(isStringArray(paths)
       ? paths.map((entry) => path.resolve(project, expandHome(entry, home)))
       : []),
@@ -274,7 +254,6 @@ const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => v
     trustedHooks: isStringArray(raw["trustedHooks"]) ? raw["trustedHooks"] : [],
     trustedMonitors: isStringArray(raw["trustedMonitors"]) ? raw["trustedMonitors"] : [],
     ...(typeof raw["outputStyle"] === "string" ? { outputStyle: raw["outputStyle"] } : {}),
-    ...(vendor.codexCache === undefined ? {} : { codexCache: vendor.codexCache }),
     components,
     dataRoot:
       typeof dataDir === "string"

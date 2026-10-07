@@ -5,7 +5,6 @@ import { listDir, realOrSelf, resolveWithin } from "#src/paths.ts";
 import { FORMATS } from "#src/types.ts";
 import type { AgentPlugin, Diagnostic, Format, LoadResult, Report } from "#src/types.ts";
 import type { AppEndpoint } from "#src/vendor/bridges.ts";
-import { codexCachePlugins } from "#src/vendor/codex-cache.ts";
 import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
 import { hasVendorManifest, loadVendorPlugin } from "#src/vendor/loader.ts";
 import {
@@ -22,8 +21,6 @@ interface LoadOptions {
   readonly pluginSettings?: Readonly<Record<string, boolean>>;
   readonly appEndpoints?: Readonly<Record<string, AppEndpoint>>;
   readonly dataRoot: string;
-  // Codex's versioned install cache; each newest version directory is loaded as a plugin root.
-  readonly codexCache?: string;
   readonly platform?: NodeJS.Platform;
   readonly formats?: ReadonlySet<Format>;
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -213,24 +210,18 @@ const loadPlugin = async (directory: string, options: LoadOptions): Promise<Plug
   return loadCandidate({ format, root }, options);
 };
 
-// Every candidate directory from search paths and the Codex cache, deduplicated by real path.
+// Candidate directories from explicit search paths, deduplicated by real path.
 const findCandidates = async (
   searchPaths: readonly string[],
   options: LoadOptions,
   report: Report,
 ): Promise<Candidate[]> => {
   const formats = options.formats ?? ALL_FORMATS;
-  const cached =
-    options.codexCache === undefined ? [] : await codexCachePlugins(options.codexCache);
-  const expanded = await Promise.all([
-    ...searchPaths.map(async (searchPath) =>
+  const expanded = await Promise.all(
+    searchPaths.map(async (searchPath) =>
       expandSearchPath(path.resolve(searchPath), formats, report),
     ),
-    ...cached.map(async (root): Promise<Candidate[]> => {
-      const format = await detectFormat(root, formats);
-      return format === undefined ? [] : [{ format, root }];
-    }),
-  ]);
+  );
   const all = expanded.flat();
   const reals = await Promise.all(all.map(async (candidate) => realOrSelf(candidate.root)));
   const unique = new Map<string, Candidate>();

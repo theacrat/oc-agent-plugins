@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Loads plugins from the given paths and prints what OpenCode would receive.
-// Flags: --json for machine-readable output, --vendor-dirs to include vendor install caches,
+// Flags: --json for machine-readable output,
 // --no-<format> to turn a format off (for example --no-claude).
 import { homedir } from "node:os";
 import path from "node:path";
@@ -19,6 +19,12 @@ import type { Diagnostic } from "#src/types.ts";
 
 const main = async () => {
   const argv = process.argv.slice(2);
+  const allowedFlags = new Set(["--json", ...FORMATS.map((format) => `--no-${format}`)]);
+  for (const flag of argv.filter((arg) => arg.startsWith("--"))) {
+    if (!allowedFlags.has(flag)) {
+      throw new Error(`Unknown inspect option: ${flag}`);
+    }
+  }
   const paths = argv.filter((arg) => !arg.startsWith("--"));
   const formats = Object.fromEntries(
     FORMATS.filter((format) => argv.includes(`--no-${format}`)).map((format) => [format, false]),
@@ -29,7 +35,7 @@ const main = async () => {
       dataHome: path.join(process.cwd(), ".agent-plugins-data"),
       home: homedir(),
       project: process.cwd(),
-      raw: { discovery: { paths, vendorDirs: argv.includes("--vendor-dirs") }, formats },
+      raw: { discovery: { paths }, formats },
     },
     (diagnostic) => {
       diagnostics.push(diagnostic);
@@ -39,7 +45,6 @@ const main = async () => {
     dataRoot: options.dataRoot,
     env: process.env,
     formats: options.formats,
-    ...(options.codexCache === undefined ? {} : { codexCache: options.codexCache }),
   });
   const all = { ...result, diagnostics: [...diagnostics, ...result.diagnostics] };
   if (argv.includes("--json")) {

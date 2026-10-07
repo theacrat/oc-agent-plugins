@@ -22,7 +22,7 @@ describe("grouped public settings", () => {
         rules: false,
         styles: { allowSystemReplacement: false, selected: "example:concise" },
       },
-      discovery: { paths: ["~/plugins"], vendorDirs: true },
+      discovery: { paths: ["~/plugins"] },
       formats: { cursor: false },
       plugins: {
         example: {
@@ -45,7 +45,6 @@ describe("grouped public settings", () => {
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
       "/project/.agents/plugins",
-      "/home/u/.claude/plugins/marketplaces",
       "/home/u/plugins",
     ]);
     expect(options.dataRoot).toBe("/project/plugin-data");
@@ -73,7 +72,6 @@ describe("grouped public settings", () => {
     { components: { hooks: { enabled: false } } },
     { components: { monitors: "false" } },
     { plugins: { p: { hooks: { trusted: "yes" } } } },
-    { discovery: { vendorDirs: "true" } },
     { components: { styles: { selected: false } } },
     { discovery: { paths: "./plugins" } },
     { storage: { dataDir: 12 } },
@@ -90,6 +88,14 @@ describe("grouped public settings", () => {
     expect(diagnostics.map((entry) => entry.message)).toEqual([
       'unknown option "plugins.p.hooks.trust"',
       'unknown option "components.commands.typo"',
+    ]);
+  });
+
+  it("does not discover vendor directories", () => {
+    const { diagnostics, options } = parse({ discovery: { vendorDirs: true } });
+    expect(options.searchPaths).toEqual(["/home/u/.agents/plugins", "/project/.agents/plugins"]);
+    expect(diagnostics.map((entry) => entry.message)).toEqual([
+      'unknown option "discovery.vendorDirs"',
     ]);
   });
 

@@ -13,7 +13,7 @@ Point `plugins` in `opencode.json(c)` at this directory. It has to be the direct
     {
       "package": "/path/to/opencode-agent-plugins",
       "options": {
-        "discovery": { "paths": ["~/src/my-plugins"], "vendorDirs": true },
+        "discovery": { "paths": ["~/src/my-plugins"] },
         "formats": { "cursor": false },
         "components": { "rules": false },
       },
@@ -35,7 +35,7 @@ Only set what you need. Defaults still load skills, agents, commands and MCP ser
 
 | Group            | Settings                                                                                                                 | Default                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| `discovery`      | `paths`, `vendorDirs`                                                                                                    | No extra paths; vendor folders off                 |
+| `discovery`      | `paths`                                                                                                                  | No extra paths                                     |
 | `storage`        | `dataDir`                                                                                                                | `$XDG_DATA_HOME/opencode/agent-plugins`            |
 | `formats`        | `agent-plugins`, `claude`, `codex`, `cursor` booleans                                                                    | All on                                             |
 | `components`     | `skills`, `agents`, `mcp`, `rules`, `hooks`, `monitors`, `lsp` booleans                                                  | All on; trust still required for execution         |
@@ -47,7 +47,7 @@ Unknown fields are reported with their full path. Malformed nested settings reje
 
 ## Where plugins are found
 
-The search paths are `~/.agents/plugins`, `<project>/.agents/plugins`, everything in `discovery.paths`, and the vendor directories when `discovery.vendorDirs` is on.
+The search paths are `~/.agents/plugins`, `<project>/.agents/plugins`, everything in `discovery.paths`.
 
 Each search path can be any of these:
 
@@ -105,7 +105,6 @@ Every problem is logged to the OpenCode server log with an `[agent-plugins]` pre
 bun install
 bun run check                         # oxlint, oxfmt --check, vitest
 bun run inspect <path>...             # what OpenCode would get; exits 1 on any error
-bun run inspect --vendor-dirs --json  # everything installed for Claude, Codex and Cursor
 bun run inspect --no-claude <path>    # turn a format off
 ```
 
@@ -117,8 +116,6 @@ Source files import each other through the `#src/*` subpath import in `package.j
 
 Claude and Cursor `agents/` files (or declared `agents` paths) become OpenCode subagents named `<plugin>:<agent>`. Their prompts, descriptions, colours, step limits and tool restrictions are mapped. Restricted tools are never widened to unrestricted grants. Claude model aliases such as `sonnet` and `opus` inherit the session model and produce a warning; explicit `provider/model` values are retained. Set `components: { agents: false }` to disable agent registration.
 
-`discovery.vendorDirs` only controls where this loader searches. For example, with it off, a Claude plugin in `~/.claude/plugins/marketplaces` is not searched automatically, but it still loads if you include that directory in `discovery.paths`. It never starts Claude, Codex or Cursor.
-
 ## Per-plugin settings
 
 This is an example `options` object. It belongs inside the OpenCode plugin entry, not in the imported plugin's manifest. The two plugins are configured independently, and each feature's options sit together.
@@ -127,7 +124,6 @@ This is an example `options` object. It belongs inside the OpenCode plugin entry
 {
   "discovery": {
     "paths": ["~/src/my-plugins"],
-    "vendorDirs": false,
   },
   "components": {
     "skills": true,

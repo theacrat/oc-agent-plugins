@@ -158,15 +158,11 @@ const groupedSettings = (raw: JsonRecord, report: Report): JsonRecord => {
   const output: Record<string, unknown> = { ...pluginSettings(raw["plugins"], report) };
   copy(raw, "formats", output);
   const discovery = group(raw["discovery"], "discovery");
-  fields(discovery, ["paths", "vendorDirs"], "discovery", report);
+  fields(discovery, ["paths"], "discovery", report);
   if (discovery["paths"] !== undefined && !isStringArray(discovery["paths"])) {
     throw new Error("discovery.paths must be an array of strings");
   }
   copy(discovery, "paths", output);
-  const vendorDirs = bool(discovery, "vendorDirs", "discovery");
-  if (vendorDirs !== undefined) {
-    output["vendorDirs"] = vendorDirs;
-  }
   const storage = group(raw["storage"], "storage");
   fields(storage, ["dataDir"], "storage", report);
   if (storage["dataDir"] !== undefined && typeof storage["dataDir"] !== "string") {

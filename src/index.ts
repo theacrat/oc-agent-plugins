@@ -76,7 +76,6 @@ const loadConfiguredPlugins = async (
     pluginAppEndpoints: options.pluginAppEndpoints,
     pluginSettings: options.pluginSettings,
     trustedHooks: options.trustedHooks,
-    ...(options.codexCache === undefined ? {} : { codexCache: options.codexCache }),
   });
   const loaded = {
     diagnostics: [...optionDiagnostics, ...result.diagnostics],

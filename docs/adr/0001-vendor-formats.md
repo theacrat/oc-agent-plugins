@@ -34,13 +34,7 @@ Turning a format off with `formats: { claude: false }` lets the next format clai
 
 Claude and Cursor both use `marketplace.json` to list plugins in subdirectories. Local `source` paths (a string, or `{ source: "local", path }`) are followed. Git, URL and npm sources are skipped and reported, because installing plugins is the host's job, not the loader's.
 
-The vendors' own install caches are added as search paths when their format is on:
-
-- Claude: `~/.claude/plugins/marketplaces/*/` (each is a marketplace).
-- Codex: `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/`. Only the newest version directory of each plugin is used.
-- Cursor: `~/.cursor/plugins/local/*`.
-
-These are off by default (`vendorDirs: false`), because loading every plugin a user installed into another tool is a big surprise. Users opt in.
+Vendor installation directories are not searched automatically. Users must name any outside plugin roots or marketplaces in `discovery.paths`. There is no cache-specific version selection.
 
 ### Vendor MCP mapping
 
@@ -79,14 +73,13 @@ Hooks, LSP servers, output styles, apps and `userConfig` are reported as unsuppo
 ```jsonc
 {
   "formats": { "agent-plugins": true, "claude": true, "codex": true, "cursor": true },
-  "vendorDirs": false,
   "components": { "skills": true, "mcp": true, "commands": true, "rules": true },
 }
 ```
 
 ## Verification
 
-Run against the 76 plugins installed for Claude Code and Codex on the author's machine plus cloudflare/skills (`bun run inspect --vendor-dirs`): 96 skills, 16 MCP servers, 32 commands, 0 errors. This was also checked in a running OpenCode server:
+Run against the 76 plugins installed for Claude Code and Codex on the author's machine plus cloudflare/skills (using explicitly supplied plugin paths): 96 skills, 16 MCP servers, 32 commands, 0 errors. This was also checked in a running OpenCode server:
 
 - A Cursor command and an always-apply rule both reached the model.
 - `/commit-commands:commit` injected live git status.
