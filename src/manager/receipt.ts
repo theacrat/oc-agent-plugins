@@ -121,4 +121,44 @@ async function writeReceipt(directory: string, receipt: Receipt): Promise<void> 
   });
 }
 
-export { readReceipt, validateReceipt, writeReceipt };
+function sameSource(left: Source, right: Source): boolean {
+  if (left.kind === "local" && right.kind === "local") {
+    return left.path === right.path;
+  }
+  if (left.kind === "git" && right.kind === "git") {
+    return left.url === right.url && left.ref === right.ref && left.subdir === right.subdir;
+  }
+  return false;
+}
+
+function assertUpdateReceipt(
+  previous: Receipt | undefined,
+  source: Source,
+  expected?: Receipt,
+): void {
+  validateSourceReference(source);
+  if (!previous || !sameSource(previous.source, source)) {
+    throw new Error(
+      "Installation source changed during acquisition; acquire it again before updating",
+    );
+  }
+  if (!expected) {
+    return;
+  }
+  validateReceipt(expected);
+  if (
+    previous.schemaVersion !== expected.schemaVersion ||
+    previous.name !== expected.name ||
+    previous.format !== expected.format ||
+    previous.version !== expected.version ||
+    previous.revision !== expected.revision ||
+    previous.fingerprint !== expected.fingerprint ||
+    !sameSource(previous.source, expected.source)
+  ) {
+    throw new Error(
+      "Installation receipt changed during acquisition; acquire it again before updating",
+    );
+  }
+}
+
+export { assertUpdateReceipt, readReceipt, validateReceipt, writeReceipt };

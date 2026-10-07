@@ -14,6 +14,7 @@ import nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { validateSource } from "#src/manager/paths.ts";
+import { validateReceipt } from "#src/manager/receipt.ts";
 import {
   doctor,
   install,
@@ -89,6 +90,65 @@ afterEach(async () => {
 });
 
 describe("manager store", () => {
+  it("rejects stale acquisitions after reinstalling from a different source", async () => {
+    const original = await install(root, source, deps);
+    await removeInstallation(root, "demo", deps);
+    const replacementPath = join(directory, "replacement");
+    await cp(source.directory, replacementPath, { recursive: true });
+    await writeFile(join(replacementPath, "payload.txt"), "replacement");
+    await install(
+      root,
+      { ...source, directory: replacementPath, source: { kind: "local", path: replacementPath } },
+      deps,
+    );
+    await expect(update(root, "demo", source, deps)).rejects.toThrow("source changed");
+    await expect(update(root, "demo", source, deps, original.receipt)).rejects.toThrow(
+      "source changed",
+    );
+    expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("replacement");
+    const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+    expect(await readdir(state)).toEqual([]);
+  });
+
+  it.each(["fingerprint", "revision"] as const)(
+    "rejects an expected receipt with stale %s",
+    async (field) => {
+      const installed = await install(root, source, deps);
+      if (!installed.receipt) {
+        throw new Error("Missing test receipt");
+      }
+      const expected = {
+        ...installed.receipt,
+        [field]: field === "revision" ? "a".repeat(40) : "stale fingerprint",
+      };
+      await writeFile(join(source.directory, "payload.txt"), "new acquisition");
+      await expect(update(root, "demo", source, deps, expected)).rejects.toThrow("receipt changed");
+      expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("first");
+      const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+      expect(await readdir(state)).toEqual([]);
+    },
+  );
+
+  it("compares equivalent receipts independently of JSON field order", async () => {
+    const gitSource: AcquiredSource = {
+      ...source,
+      revision: "a".repeat(40),
+      source: { kind: "git", ref: "main", subdir: "plugin", url: "https://example.com/repo" },
+    };
+    const installed = await install(root, gitSource, deps);
+    if (!installed.receipt) {
+      throw new Error("Missing test receipt");
+    }
+    const { receipt } = installed;
+    const reorderedSource = Object.fromEntries(Object.entries(receipt.source).toReversed());
+    const entries = Object.entries({ ...receipt, source: reorderedSource }).toReversed();
+    const expected: unknown = Object.fromEntries(entries);
+    validateReceipt(expected);
+    await writeFile(join(source.directory, "payload.txt"), "updated");
+    await update(root, "demo", gitSource, deps, expected);
+    expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("updated");
+  });
+
   it("retains the journal and unmanaged destination on a disable rollback collision", async () => {
     await install(root, source, deps);
     const active = join(root, "demo");

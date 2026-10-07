@@ -11,7 +11,7 @@ import {
   validateSource,
   validateTree,
 } from "./paths.ts";
-import { readReceipt, writeReceipt } from "./receipt.ts";
+import { assertUpdateReceipt, readReceipt, writeReceipt } from "./receipt.ts";
 import { transact } from "./transaction.ts";
 import type { Boundary } from "./transaction.ts";
 import { RECEIPT } from "./types.ts";
@@ -91,8 +91,7 @@ async function listInstallations(root: string, deps: StoreDependencies): Promise
       );
     }),
   );
-  const result = groups.flat();
-  result.push(...(await stateInventory(paths.state)));
+  const result = [...groups.flat(), ...(await stateInventory(paths.state))];
   return result.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -221,10 +220,12 @@ async function update(
   name: string,
   acquired: AcquiredSource,
   deps: StoreDependencies,
+  expectedReceipt?: Receipt,
 ): Promise<Installation> {
   validateName(name);
   return withLock(root, async () => {
     const previous = await find(root, name, deps);
+    assertUpdateReceipt(previous.receipt, acquired.source, expectedReceipt);
     const paths = storePaths(root);
     const { stage } = await stageSource(root, acquired, deps, previous.receipt);
     await transact({
@@ -288,19 +289,18 @@ async function removeInstallation(
   });
 }
 
-interface StoreDiagnostics {
-  readonly installations: readonly Installation[];
-  readonly problems: readonly string[];
-}
+type StoreDiagnostics = Readonly<{
+  installations: readonly Installation[];
+  problems: readonly string[];
+}>;
 
 async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagnostics> {
-  const paths = storePaths(root);
   const installations = await listInstallations(root, deps);
   const problems = installations.flatMap((entry) => {
     if (!entry.problem) {
       return [];
     }
-    return entry.directory === paths.state
+    return entry.directory === storePaths(root).state
       ? entry.problem.split("\n")
       : [`${entry.name}: ${entry.problem}`];
   });
