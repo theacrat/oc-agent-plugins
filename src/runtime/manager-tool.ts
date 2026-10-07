@@ -1,11 +1,8 @@
-import { homedir } from "node:os";
-
 import type { Plugin } from "@opencode/plugin";
 import type { ToolContext } from "@opencode/plugin/promise/tool";
 
 import { parseArguments } from "#src/cli/arguments.ts";
 import { errorOutput } from "#src/cli/errors.ts";
-import { runCli } from "#src/cli/run.ts";
 import type { JsonRecord } from "#src/json.ts";
 import { isRecord } from "#src/json.ts";
 import { safeNativeError } from "#src/runtime/manager-errors.ts";
@@ -68,40 +65,20 @@ const managerToolArguments = (input: unknown): string[] => {
   return argv;
 };
 
-const executeManagerTool = async (ctx: Plugin.Context, input: unknown, context: ToolContext) => {
+const executeManagerTool = (input: unknown, context: ToolContext) => {
   try {
-    const argv = managerToolArguments(input);
+    managerToolArguments(input);
     context.signal.throwIfAborted();
-    let directory: string;
-    try {
-      const { location } = await ctx.session.get({ sessionID: context.sessionID });
-      ({ directory } = location);
-    } catch {
-      return {
-        content: errorOutput(
-          ["--json"],
-          new Error(
-            "Unable to read the invoking session location. Retry when the session is available.",
-          ),
+    // OpenCode 2.0.24 filters denied tool definitions but does not request approval before execution.
+    // Its plugin context exposes neither permission creation nor forms, so do not dispatch without a gate.
+    return {
+      content: errorOutput(
+        ["--json"],
+        new Error(
+          "Agent package management is unavailable because this OpenCode plugin SDK cannot request user approval. Ask the user to run /agent-plugins-manage with the desired action and scope.",
         ),
-      };
-    }
-    context.signal.throwIfAborted();
-    const output: string[] = [];
-    await runCli(argv, {
-      cwd: directory,
-      // oxlint-disable-next-line node/no-process-env -- tool invocation is the CLI environment boundary
-      env: process.env,
-      home: homedir(),
-      stderr: (text) => {
-        const message = safeNativeError(new Error(text));
-        output.push(errorOutput(["--json"], new Error(message)));
-      },
-      stdout: (text) => {
-        output.push(text);
-      },
-    });
-    return { content: output.join("\n") };
+      ),
+    };
   } catch (error) {
     return { content: errorOutput(["--json"], new Error(safeNativeError(error))) };
   }
@@ -123,8 +100,11 @@ const registerManagerTool = async (ctx: Plugin.Context) => {
       await ctx.tool.transform((editor) => {
         editor.add({
           description:
-            "Manage Agent Plugins packages. Requires approval for reads and changes; does not grant trust or rescan runtime components.",
-          execute: async (input: unknown, context) => executeManagerTool(ctx, input, context),
+            "Agent package management is blocked until the plugin SDK supports user approval. Ask the user to run /agent-plugins-manage instead.",
+          execute: async (input: unknown, context) => {
+            await Promise.resolve();
+            return executeManagerTool(input, context);
+          },
           input: {
             additionalProperties: false,
             properties: {
