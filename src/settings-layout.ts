@@ -7,7 +7,6 @@ const LEGACY = new Set([
   "paths",
   "vendorDirs",
   "dataDir",
-  "components",
   "shellInjection",
   "configuration",
   "pluginSettings",
@@ -17,7 +16,7 @@ const LEGACY = new Set([
   "allowSystemReplacement",
   "appEndpoints",
 ]);
-const GROUPED = new Set(["discovery", "storage", "plugins", ...COMPONENTS]);
+const GROUPED = new Set(["discovery", "storage", "plugins"]);
 
 const group = (value: unknown, source: string): JsonRecord => {
   if (value === undefined) {
@@ -117,8 +116,51 @@ const pluginSettings = (value: unknown, report: Report): JsonRecord => {
   };
 };
 
+const componentSettings = (value: unknown, output: Record<string, unknown>, report: Report) => {
+  const components: Record<string, boolean> = {};
+  const switches = group(value, "components");
+  fields(switches, COMPONENTS, "components", report);
+  for (const feature of COMPONENTS.filter((name) => !["commands", "styles"].includes(name))) {
+    const enabled = bool(switches, feature, "components");
+    if (enabled !== undefined) {
+      components[feature] = enabled;
+    }
+  }
+  for (const feature of ["commands", "styles"] as const) {
+    const settings = group(switches[feature], `components.${feature}`);
+    const special = FEATURE_FIELDS[feature] ?? [];
+    fields(settings, ["enabled", ...special], `components.${feature}`, report);
+    const enabled = bool(settings, "enabled", `components.${feature}`);
+    if (enabled !== undefined) {
+      components[feature] = enabled;
+    }
+    if (feature === "commands") {
+      const injection = bool(settings, "shellInjection", `components.${feature}`);
+      if (injection !== undefined) {
+        output["shellInjection"] = injection;
+      }
+    }
+    if (feature === "styles") {
+      if (settings["selected"] !== undefined && typeof settings["selected"] !== "string") {
+        throw new Error("components.styles.selected must be a plugin:name string");
+      }
+      copy(settings, "selected", output, "outputStyle");
+      const replacement = bool(settings, "allowSystemReplacement", `components.${feature}`);
+      if (replacement !== undefined) {
+        output["allowSystemReplacement"] = replacement;
+      }
+    }
+  }
+  output["components"] = components;
+};
+
 const groupedSettings = (raw: JsonRecord, report: Report): JsonRecord => {
-  fields(raw, ["discovery", "storage", "formats", "plugins", ...COMPONENTS], "options", report);
+  fields(raw, ["discovery", "storage", "formats", "plugins", "components"], "options", report);
+  for (const feature of COMPONENTS) {
+    if (raw[feature] !== undefined) {
+      throw new Error(`Move ${feature} settings into components.${feature}`);
+    }
+  }
   const output: Record<string, unknown> = { ...pluginSettings(raw["plugins"], report) };
   copy(raw, "formats", output);
   const discovery = group(raw["discovery"], "discovery");
@@ -137,33 +179,7 @@ const groupedSettings = (raw: JsonRecord, report: Report): JsonRecord => {
     throw new Error("storage.dataDir must be a string");
   }
   copy(storage, "dataDir", output);
-  const components: Record<string, boolean> = {};
-  for (const feature of COMPONENTS) {
-    const settings = group(raw[feature], feature);
-    const special = FEATURE_FIELDS[feature] ?? [];
-    fields(settings, ["enabled", ...special], feature, report);
-    const enabled = bool(settings, "enabled", feature);
-    if (enabled !== undefined) {
-      components[feature] = enabled;
-    }
-    if (feature === "commands") {
-      const injection = bool(settings, "shellInjection", feature);
-      if (injection !== undefined) {
-        output["shellInjection"] = injection;
-      }
-    }
-    if (feature === "styles") {
-      if (settings["selected"] !== undefined && typeof settings["selected"] !== "string") {
-        throw new Error("styles.selected must be a plugin:name string");
-      }
-      copy(settings, "selected", output, "outputStyle");
-      const replacement = bool(settings, "allowSystemReplacement", feature);
-      if (replacement !== undefined) {
-        output["allowSystemReplacement"] = replacement;
-      }
-    }
-  }
-  output["components"] = components;
+  componentSettings(raw["components"], output, report);
   return output;
 };
 

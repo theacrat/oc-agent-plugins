@@ -15,7 +15,7 @@ Point `plugins` in `opencode.json(c)` at this directory. It has to be the direct
       "options": {
         "discovery": { "paths": ["~/src/my-plugins"], "vendorDirs": true },
         "formats": { "cursor": false },
-        "rules": { "enabled": false },
+        "components": { "rules": false },
       },
     },
   ],
@@ -33,15 +33,15 @@ Settings inside the OpenCode plugin entry's `options` have two groups of respons
 
 Only set what you need. Defaults still load skills, agents, commands and MCP servers; hooks and monitors require explicit per-plugin trust.
 
-| Group                                                          | Settings                                                                                                   | Default                                            |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `discovery`                                                    | `paths`, `vendorDirs`                                                                                      | No extra paths; vendor folders off                 |
-| `storage`                                                      | `dataDir`                                                                                                  | `$XDG_DATA_HOME/opencode/agent-plugins`            |
-| `formats`                                                      | `agent-plugins`, `claude`, `codex`, `cursor` booleans                                                      | All on                                             |
-| `skills`, `agents`, `mcp`, `rules`, `hooks`, `monitors`, `lsp` | `enabled`                                                                                                  | All on; trust still required for execution         |
-| `commands`                                                     | `enabled`, `shellInjection`                                                                                | Both on                                            |
-| `styles`                                                       | `enabled`, `selected` (`plugin:name`), `allowSystemReplacement`                                            | Enabled; no selected style; system replacement off |
-| `plugins.<name>`                                               | `enabled`, `hooks.trusted`, `monitors.trusted`, `configuration`, `agents.modelAliases`, `mcp.appEndpoints` | Normal activation; no trust or supplied values     |
+| Group            | Settings                                                                                                   | Default                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `discovery`      | `paths`, `vendorDirs`                                                                                      | No extra paths; vendor folders off                 |
+| `storage`        | `dataDir`                                                                                                  | `$XDG_DATA_HOME/opencode/agent-plugins`            |
+| `formats`        | `agent-plugins`, `claude`, `codex`, `cursor` booleans                                                      | All on                                             |
+| `components`     | `skills`, `agents`, `mcp`, `rules`, `hooks`, `monitors`, `lsp` booleans                                    | All on; trust still required for execution         |
+| `commands`       | `enabled`, `shellInjection`                                                                                | Both on                                            |
+| `styles`         | `enabled`, `selected` (`plugin:name`), `allowSystemReplacement`                                            | Enabled; no selected style; system replacement off |
+| `plugins.<name>` | `enabled`, `hooks.trusted`, `monitors.trusted`, `configuration`, `agents.modelAliases`, `mcp.appEndpoints` | Normal activation; no trust or supplied values     |
 
 Unknown fields are reported with their full path. Malformed nested settings reject the configuration rather than silently changing trust. Old flat options still work with a migration warning, but cannot be mixed with the grouped layout in the same `options` object.
 
@@ -74,7 +74,7 @@ The plugin also adds `/agent-plugins`. It rescans everything, reloads it, and po
 - **Agent Plugins** follow the spec strictly. See [Conformance](#agent-plugins-conformance).
 - **Claude Code**: reads `.claude-plugin/plugin.json` (optional when a marketplace lists the plugin), `skills/` plus any declared `skills`, and `commands/` or declared `commands`, including the inline object form. `.mcp.json` and declared `mcpServers` are merged, with later names winning.
   - `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}` are expanded in MCP config and in skill and command bodies. `${CLAUDE_SKILL_DIR}` is expanded in skill bodies.
-  - `${VAR}` and `${VAR:-default}` read the OpenCode server's environment in MCP config only. They're never expanded in Markdown bodies. This matches Claude Code, and it's how the GitHub plugin's `Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}` header works. It also means a Claude plugin can send any variable from the OpenCode server's environment to its own MCP host, so only load Claude plugins you'd trust with that. To opt out, turn off `claude` in `formats`, or set `mcp.enabled` to false.
+  - `${VAR}` and `${VAR:-default}` read the OpenCode server's environment in MCP config only. They're never expanded in Markdown bodies. This matches Claude Code, and it's how the GitHub plugin's `Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}` header works. It also means a Claude plugin can send any variable from the OpenCode server's environment to its own MCP host, so only load Claude plugins you'd trust with that. To opt out, turn off `claude` in `formats`, or set `components.mcp` to false.
   - Commands follow Claude's argument rules: `$ARGUMENTS`, 0-based `$N` and `$ARGUMENTS[N]`, named `arguments`, and the trailing `ARGUMENTS:` fallback. They also run `` !`cmd` `` injection in the session directory. Injections only come from the command file itself. Anything in the text you type after the command is never run.
   - A Claude plugin with no manifest still loads when a marketplace lists it. Codex and Cursor plugins need their manifest.
   - `disable-model-invocation` hides a skill from the model, but you can still load it by ID.
@@ -115,7 +115,7 @@ Source files import each other through the `#src/*` subpath import in `package.j
 
 ### Agents
 
-Claude and Cursor `agents/` files (or declared `agents` paths) become OpenCode subagents named `<plugin>:<agent>`. Their prompts, descriptions, colours, step limits and tool restrictions are mapped. Restricted tools are never widened to unrestricted grants. Claude model aliases such as `sonnet` and `opus` inherit the session model and produce a warning; explicit `provider/model` values are retained. Set `agents: { enabled: false }` to disable agent registration.
+Claude and Cursor `agents/` files (or declared `agents` paths) become OpenCode subagents named `<plugin>:<agent>`. Their prompts, descriptions, colours, step limits and tool restrictions are mapped. Restricted tools are never widened to unrestricted grants. Claude model aliases such as `sonnet` and `opus` inherit the session model and produce a warning; explicit `provider/model` values are retained. Set `components: { agents: false }` to disable agent registration.
 
 `discovery.vendorDirs` only controls where this loader searches. For example, with it off, a Claude plugin in `~/.claude/plugins/marketplaces` is not searched automatically, but it still loads if you include that directory in `discovery.paths`. It never starts Claude, Codex or Cursor.
 
@@ -129,8 +129,17 @@ This is an example `options` object. It belongs inside the OpenCode plugin entry
     "paths": ["~/src/my-plugins"],
     "vendorDirs": false,
   },
-  "commands": { "shellInjection": false },
-  "styles": { "selected": "my-plugin:concise" },
+  "components": {
+    "skills": true,
+    "agents": true,
+    "mcp": true,
+    "rules": true,
+    "hooks": true,
+    "monitors": false,
+    "lsp": true,
+    "commands": { "enabled": true, "shellInjection": false },
+    "styles": { "enabled": true, "selected": "my-plugin:concise" },
+  },
   "plugins": {
     "my-plugin": {
       "enabled": true,
@@ -160,7 +169,7 @@ For a Cursor plugin, put `variables` and optionally `publicVariables` inside tha
 
 - **Configuration:** Claude `userConfig` and Cursor variable declarations are validated, including required fields/defaults. Sensitive values must use environment references. Cursor variables default to sensitive; only names in `publicVariables` may enter model bodies. Secrets are rejected in prompt bodies, rules, descriptions and runtime exports.
 - **Hooks:** supported command/exec tool hooks translate vendor inputs, matchers and outputs. Explicit `plugins.<name>.hooks.trusted` opt-in is required. Events or decisions without an equivalent contract are reported precisely; failed pre-tool translation blocks execution. This is a tested subset, not complete vendor hook parity.
-- **Styles:** `/agent-plugins-style plugin:name` selects a style for that session; `clear` removes the selection. Forced plugin styles take precedence. Styles that discard coding instructions require explicit `styles.allowSystemReplacement: true`, because V2 cannot isolate that part of the assembled system prompt.
+- **Styles:** `/agent-plugins-style plugin:name` selects a style for that session; `clear` removes the selection. Forced plugin styles take precedence. Styles that discard coding instructions require explicit `components.styles.allowSystemReplacement: true`, because V2 cannot isolate that part of the assembled system prompt.
 - **Rules:** matching file-tool calls activate Cursor glob-scoped rules for subsequent requests in that session. Arbitrary shell file access is not tracked.
 - **Monitors:** `/agent-plugins-monitors start` explicitly starts trusted monitors; `stop` terminates them. Process ownership, output limits, aborts, session deletion and reload/unload cleanup are enforced. POSIX only; Windows process-group termination is not implemented.
 - **LSP:** `/agent-plugins-lsp` produces a validated project-config fragment. It never writes configuration. Unsupported LSP operational fields are rejected rather than lost.
@@ -171,6 +180,6 @@ For a Cursor plugin, put `variables` and optionally `publicVariables` inside tha
 
 ### Migrating flat settings
 
-Move `paths`/`vendorDirs` to `discovery`, `dataDir` to `storage`, and `shellInjection` to `commands`. Replace `components: { rules: false }` with `rules: { enabled: false }`. Move `outputStyle`/`allowSystemReplacement` to `styles.selected`/`styles.allowSystemReplacement`.
+Move `paths`/`vendorDirs` to `discovery`, `dataDir` to `storage`, and `shellInjection` to `components.commands`. Simple component switches stay booleans under `components`. Move `outputStyle`/`allowSystemReplacement` to `components.styles.selected`/`components.styles.allowSystemReplacement`.
 
 For each plugin, collect its old `pluginSettings`, `trustedHooks`, `trustedMonitors`, `configuration` and `appEndpoints` entries under `plugins.<name>`. Put model aliases in that plugin's `agents.modelAliases` and endpoint mappings in its `mcp.appEndpoints`. Do not combine old and new keys in one options object.

@@ -17,7 +17,11 @@ const parse = (raw: Readonly<Record<string, unknown>>) => {
 describe("grouped public settings", () => {
   it("keeps feature behaviour together and plugin-specific settings under their owner", () => {
     const { diagnostics, options } = parse({
-      commands: { enabled: true, shellInjection: false },
+      components: {
+        commands: { enabled: true, shellInjection: false },
+        rules: false,
+        styles: { allowSystemReplacement: false, selected: "example:concise" },
+      },
       discovery: { paths: ["~/plugins"], vendorDirs: true },
       formats: { cursor: false },
       plugins: {
@@ -35,9 +39,7 @@ describe("grouped public settings", () => {
         },
         unwanted: { enabled: false },
       },
-      rules: { enabled: false },
       storage: { dataDir: "./plugin-data" },
-      styles: { allowSystemReplacement: false, selected: "example:concise" },
     });
     expect(diagnostics).toEqual([]);
     expect(options.searchPaths).toEqual([
@@ -68,9 +70,11 @@ describe("grouped public settings", () => {
 
   it.each([
     { hooks: false },
+    { components: { hooks: { enabled: false } } },
+    { components: { monitors: "false" } },
     { plugins: { p: { hooks: { trusted: "yes" } } } },
     { discovery: { vendorDirs: "true" } },
-    { styles: { selected: false } },
+    { components: { styles: { selected: false } } },
     { discovery: { paths: "./plugins" } },
     { storage: { dataDir: 12 } },
     { plugins: { p: false } },
@@ -80,12 +84,12 @@ describe("grouped public settings", () => {
 
   it("reports unknown fields at their full nested path", () => {
     const { diagnostics } = parse({
-      commands: { typo: true },
+      components: { commands: { typo: true } },
       plugins: { p: { hooks: { trust: true } } },
     });
     expect(diagnostics.map((entry) => entry.message)).toEqual([
       'unknown option "plugins.p.hooks.trust"',
-      'unknown option "commands.typo"',
+      'unknown option "components.commands.typo"',
     ]);
   });
 
