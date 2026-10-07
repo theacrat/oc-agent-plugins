@@ -3,7 +3,7 @@ import path from "node:path";
 import type { JsonRecord } from "#src/json.ts";
 import { ensureDir, readText, resolveWithin } from "#src/paths.ts";
 import type { AgentPlugin, Manifest, Report } from "#src/types.ts";
-import { loadCommands, loadRules, loadSkills } from "#src/vendor/components.ts";
+import { loadAgents, loadCommands, loadRules, loadSkills } from "#src/vendor/components.ts";
 import { SPECS } from "#src/vendor/formats.ts";
 import type { FormatSpec } from "#src/vendor/formats.ts";
 import { parseVendorManifest } from "#src/vendor/manifest.ts";
@@ -88,7 +88,7 @@ const loadVendorPlugin = async (
   const placeholders = placeholdersFor(format, { dataDir, env: options.env, root });
   // Claude Code substitutes plugin paths in skill and command bodies; Codex and Cursor don't.
   const expandBody = format === "claude" ? placeholders.expandContent : undefined;
-  const [skills, servers, commands, rules] = await Promise.all([
+  const [skills, servers, commands, rules, agents] = await Promise.all([
     loadSkills(root, spec, raw, expandBody, report),
     discoverVendorServers(
       {
@@ -101,6 +101,7 @@ const loadVendorPlugin = async (
     ),
     loadCommands(root, spec, raw, expandBody, report),
     loadRules(root, spec, raw, report),
+    loadAgents(root, spec, raw, expandBody, report),
     reportUnsupported(root, spec, raw, report),
   ]);
   if (Object.values(servers).some((server) => server.type === "stdio")) {
@@ -111,7 +112,7 @@ const loadVendorPlugin = async (
   }
   return {
     ok: true,
-    plugin: { commands, dataDir, format, manifest, root, rules, servers, skills },
+    plugin: { agents, commands, dataDir, format, manifest, root, rules, servers, skills },
   };
 };
 

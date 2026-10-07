@@ -1,4 +1,4 @@
-import { Skill } from "@opencode/plugin";
+import { Agent, Model, Provider, Skill } from "@opencode/plugin";
 import type { Mcp } from "@opencode/plugin";
 
 import type {
@@ -7,6 +7,7 @@ import type {
   Diagnostic,
   LoadResult,
   PluginCommand,
+  PluginAgent,
   PluginRule,
   PluginServer,
 } from "#src/types.ts";
@@ -49,6 +50,7 @@ const toSkillInfo = (plugin: AgentPlugin): Skill.Info[] => [
       skill.description,
       skill.path,
       skill.content,
+      skill.autoinvoke,
     ),
   ),
   ...plugin.rules
@@ -94,6 +96,7 @@ const toCommands = (plugin: AgentPlugin): { name: string; command: PluginCommand
 // Drops disabled component types so registration and the status report agree.
 const scopeComponents = (plugin: AgentPlugin, components: ReadonlySet<Component>): AgentPlugin => ({
   ...plugin,
+  agents: components.has("agents") ? plugin.agents : [],
   commands: components.has("commands") ? plugin.commands : [],
   rules: components.has("rules") ? plugin.rules : [],
   servers: components.has("mcp") ? plugin.servers : {},
@@ -112,13 +115,16 @@ const formatPlugin = (plugin: AgentPlugin) => {
   const servers = Object.keys(plugin.servers).map((name) => serverName(plugin, name));
   const commands = plugin.commands.map((command) => `/${commandName(plugin, command.name)}`);
   const rules = plugin.rules.filter((rule) => rule.alwaysApply).map((rule) => rule.name);
-  const empty = skills.length + servers.length + commands.length + rules.length === 0;
+  const agents = plugin.agents.map((agent) => `${plugin.manifest.name}:${agent.name}`);
+  const empty =
+    skills.length + servers.length + commands.length + rules.length + agents.length === 0;
   return [
     `${plugin.manifest.name}${version} [${plugin.format}] (${plugin.root})`,
     ...list("skills", skills),
     ...list("mcp", servers),
     ...list("commands", commands),
     ...list("always-on rules", rules),
+    ...list("agents", agents),
     ...(empty ? ["  nothing OpenCode can use"] : []),
   ];
 };
@@ -135,7 +141,48 @@ const formatStatus = (result: LoadResult, searchPaths: readonly string[]) =>
       : ["", "Diagnostics:", ...result.diagnostics.map(formatDiagnostic)]),
   ].join("\n");
 
+const toAgentInfo = (plugin: AgentPlugin): Agent.Info[] =>
+  plugin.agents.map((agent: PluginAgent) => {
+    const id = Agent.ID.make(`${plugin.manifest.name}:${agent.name}`);
+    const defaults = Agent.Info.default(id);
+    const [provider, modelWithVariant] = agent.model?.split("/") ?? [];
+    const [model, variant] = modelWithVariant?.split("#") ?? [];
+    return {
+      ...defaults,
+      mode: agent.mode,
+      name: Agent.Info.fields.name.make(agent.name),
+      permissions:
+        agent.permissions.length === 0
+          ? defaults.permissions
+          : [
+              ...agent.permissions,
+              ...defaults.permissions.filter(
+                (rule) =>
+                  rule.action === "external_directory" ||
+                  (rule.action === "read" &&
+                    agent.permissions.some(
+                      (permission) => permission.action === "read" && permission.effect === "allow",
+                    )),
+              ),
+            ],
+      system: agent.system,
+      ...(agent.description === undefined ? {} : { description: agent.description }),
+      ...(agent.color === undefined ? {} : { color: agent.color }),
+      ...(agent.steps === undefined ? {} : { steps: agent.steps }),
+      ...(provider === undefined || model === undefined
+        ? {}
+        : {
+            model: {
+              id: Model.ID.make(model),
+              providerID: Provider.ID.make(provider),
+              ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+            },
+          }),
+    };
+  });
+
 export {
+  toAgentInfo,
   alwaysRules,
   scopeComponents,
   commandName,

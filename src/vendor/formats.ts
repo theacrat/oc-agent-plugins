@@ -15,6 +15,8 @@ interface FormatSpec {
   // How command templates expand arguments, or false when the format has no commands.
   readonly commands: CommandSyntax | false;
   readonly rules: boolean;
+  // Markdown agents in `agents/` (or declared `agents` paths, which replace the default).
+  readonly agents: boolean;
   // Fields this plugin can't map to OpenCode; reported so users see what's missing.
   readonly unsupported: readonly string[];
   readonly unsupportedDirs: readonly string[];
@@ -22,6 +24,7 @@ interface FormatSpec {
 
 const SPECS: Readonly<Record<VendorFormat, FormatSpec>> = {
   claude: {
+    agents: true,
     commands: "claude",
     manifest: ".claude-plugin/plugin.json",
     manifestOptional: true,
@@ -31,7 +34,6 @@ const SPECS: Readonly<Record<VendorFormat, FormatSpec>> = {
     rules: false,
     skillsDeclaredReplaces: false,
     unsupported: [
-      "agents",
       "hooks",
       "lspServers",
       "outputStyles",
@@ -40,9 +42,10 @@ const SPECS: Readonly<Record<VendorFormat, FormatSpec>> = {
       "channels",
       "experimental",
     ],
-    unsupportedDirs: ["agents", "hooks", "output-styles", "monitors"],
+    unsupportedDirs: ["hooks", "output-styles", "monitors"],
   },
   codex: {
+    agents: false,
     commands: false,
     manifest: ".codex-plugin/plugin.json",
     manifestOptional: false,
@@ -54,6 +57,7 @@ const SPECS: Readonly<Record<VendorFormat, FormatSpec>> = {
     unsupportedDirs: ["hooks"],
   },
   cursor: {
+    agents: true,
     commands: "plain",
     manifest: ".cursor-plugin/plugin.json",
     manifestOptional: false,
@@ -62,8 +66,8 @@ const SPECS: Readonly<Record<VendorFormat, FormatSpec>> = {
     mcpDefaults: ["mcp.json"],
     rules: true,
     skillsDeclaredReplaces: true,
-    unsupported: ["agents", "hooks", "variables"],
-    unsupportedDirs: ["agents", "hooks"],
+    unsupported: ["hooks", "variables"],
+    unsupportedDirs: ["hooks"],
   },
 };
 

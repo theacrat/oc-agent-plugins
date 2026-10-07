@@ -1,6 +1,6 @@
 # opencode-agent-plugins
 
-An OpenCode v2 plugin that loads [Agent Plugins](https://agent-plugins.org/) 1.0.0 packages, plus Claude Code, Codex and Cursor plugins. Their skills, MCP servers, commands and rules show up in OpenCode as if you'd configured them by hand. Each format and each component type can be turned off.
+An OpenCode v2 plugin that loads [Agent Plugins](https://agent-plugins.org/) 1.0.0 packages, plus Claude Code, Codex and Cursor plugins. Their skills, MCP servers, commands, rules and agents show up in OpenCode as if you'd configured them by hand. Each format and each component type can be turned off.
 
 ## Install
 
@@ -31,7 +31,7 @@ If you don't need options, symlinking the directory into `~/.config/opencode/plu
 | ---------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `paths`          | `[]`                                    | Extra search paths. Relative paths resolve against the project, and `~` is your home directory.                                                |
 | `formats`        | all `true`                              | `{ "agent-plugins", "claude", "codex", "cursor" }`. Set one to `false` to stop loading that format.                                            |
-| `components`     | all `true`                              | `{ "skills", "mcp", "commands", "rules" }`. Set one to `false` to stop registering that component type.                                        |
+| `components`     | all `true`                              | `{ "skills", "mcp", "commands", "rules", "agents" }`. Set one to `false` to stop registering that component type.                              |
 | `vendorDirs`     | `false`                                 | Also load plugins already installed for other tools: `~/.claude/plugins/marketplaces`, `~/.codex/plugins/cache` and `~/.cursor/plugins/local`. |
 | `shellInjection` | `true`                                  | Run `` !`cmd` `` blocks in Claude commands when you invoke the command. With this off, they show up as text instead.                           |
 | `dataDir`        | `$XDG_DATA_HOME/opencode/agent-plugins` | Where each plugin's persistent data directory lives.                                                                                           |
@@ -74,7 +74,7 @@ The plugin also adds `/agent-plugins`. It rescans everything, reloads it, and po
 - **Codex**: reads `.codex-plugin/plugin.json`, `skills/` plus any declared `skills`, `.mcp.json` and declared `mcpServers`. `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded, along with their `CLAUDE_` aliases. Host-only keys like `env_vars` and `enabled` are ignored with a warning.
 - **Cursor**: reads `.cursor-plugin/plugin.json`, `skills/`, `rules/`, `commands/` and `mcp.json`. A declared path replaces the default location. A root `SKILL.md` counts as a single-skill plugin. `${CURSOR_PLUGIN_ROOT}` is expanded. Commands use OpenCode's own argument rules.
 
-Hooks, agents, LSP servers, apps, output styles, `userConfig` and Cursor `variables` have no OpenCode equivalent. Each plugin that uses them gets a warning listing what was ignored. SSE, WebSocket and MCP bundle (`.mcpb`) servers are skipped with a warning.
+Hooks, LSP servers, apps, output styles, `userConfig` and Cursor `variables` have no OpenCode equivalent. Each plugin that uses them gets a warning listing what was ignored. SSE, WebSocket and MCP bundle (`.mcpb`) servers are skipped with a warning.
 
 ## Diagnostics
 
@@ -105,3 +105,9 @@ bun run inspect --no-claude <path>    # turn a format off
 Source files import each other through the `#src/*` subpath import in `package.json`. That's because OpenCode runs `src/` as raw TypeScript, where tsconfig `paths` don't apply. A lint rule enforces it.
 
 [cloudflare/skills](https://github.com/cloudflare/skills) ships all four manifests and is the real-world fixture. CI clones it at a pinned commit, and locally `CLOUDFLARE_SKILLS=/path/to/checkout bun run test` runs the same check. `examples/hello` is a minimal Agent Plugin with a dependency-free stdio MCP server.
+
+### Agents
+
+Claude and Cursor `agents/` files (or declared `agents` paths) become OpenCode subagents named `<plugin>:<agent>`. Their prompts, descriptions, colours, step limits and tool restrictions are mapped. Restricted tools are never widened to unrestricted grants. Claude model aliases such as `sonnet` and `opus` inherit the session model and produce a warning; explicit `provider/model` values are retained. Set `components: { agents: false }` to disable agent registration.
+
+`vendorDirs` only controls where this loader searches. For example, with it off, a Claude plugin in `~/.claude/plugins/marketplaces` is not searched automatically, but it still loads if you include that directory in `paths`. It never starts Claude, Codex or Cursor.

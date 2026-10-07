@@ -44,6 +44,7 @@ const main = async () => {
   const all = { ...result, diagnostics: [...diagnostics, ...result.diagnostics] };
   if (argv.includes("--json")) {
     const plugins = all.plugins.map((plugin) => ({
+      agents: plugin.agents.map((agent) => `${plugin.manifest.name}:${agent.name}`),
       alwaysRules: alwaysRules(plugin).length,
       commands: toCommands(plugin).map(({ name }) => name),
       format: plugin.format,

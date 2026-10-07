@@ -11,6 +11,7 @@ import {
 import type { AgentPlugin } from "#src/types.ts";
 
 const plugin: AgentPlugin = {
+  agents: [],
   commands: [
     {
       arguments: [],

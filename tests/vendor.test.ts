@@ -158,7 +158,7 @@ describe("claude", () => {
     const { diagnostics } = await load(dir);
     expect(diagnostics).toEqual([
       {
-        message: "not supported in OpenCode and ignored: lspServers, agents/, hooks/",
+        message: "not supported in OpenCode and ignored: lspServers, hooks/",
         severity: "warning",
         source: "x/.claude-plugin/plugin.json",
       },
@@ -381,7 +381,7 @@ describe("format precedence and toggles", () => {
       },
     );
     expect([...options.formats]).toEqual(["agent-plugins", "codex", "cursor"]);
-    expect([...options.components]).toEqual(["skills", "mcp", "rules"]);
+    expect([...options.components]).toEqual(["skills", "mcp", "rules", "agents"]);
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
       "/p/.agents/plugins",

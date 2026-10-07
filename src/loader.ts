@@ -38,6 +38,9 @@ interface Candidate {
 
 const ALL_FORMATS: ReadonlySet<Format> = new Set(FORMATS);
 
+const manifestWarnings = (warnings: readonly string[], source: string): Diagnostic[] =>
+  warnings.map((message) => ({ message, severity: "warning", source }));
+
 const loadAgentPlugin = async (root: string, options: LoadOptions): Promise<PluginLoad> => {
   const manifestFile = await resolveWithin(root, path.join(root, "plugin.json"));
   const reject = (message: string): PluginLoad => ({
@@ -56,11 +59,7 @@ const loadAgentPlugin = async (root: string, options: LoadOptions): Promise<Plug
     return reject(`plugin rejected: ${result.error}`);
   }
   const { manifest } = result;
-  const diagnostics: Diagnostic[] = result.warnings.map((message) => ({
-    message,
-    severity: "warning",
-    source: manifest.name,
-  }));
+  const diagnostics: Diagnostic[] = manifestWarnings(result.warnings, manifest.name);
   const report: Report = (diagnostic) => {
     diagnostics.push({ ...diagnostic, source: `${manifest.name}/${diagnostic.source}` });
   };
@@ -78,6 +77,7 @@ const loadAgentPlugin = async (root: string, options: LoadOptions): Promise<Plug
     }
   }
   const plugin: AgentPlugin = {
+    agents: [],
     commands: [],
     dataDir,
     format: "agent-plugins",

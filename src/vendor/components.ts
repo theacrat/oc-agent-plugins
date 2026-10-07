@@ -3,7 +3,8 @@ import path from "node:path";
 import { isRecord } from "#src/json.ts";
 import type { JsonRecord } from "#src/json.ts";
 import { discoverSingleSkill, discoverSkillsIn } from "#src/skills.ts";
-import type { PluginCommand, PluginRule, PluginSkill, Report } from "#src/types.ts";
+import type { PluginAgent, PluginCommand, PluginRule, PluginSkill, Report } from "#src/types.ts";
+import { discoverAgents } from "#src/vendor/agents.ts";
 import type { FormatSpec } from "#src/vendor/formats.ts";
 import { discoverCommands, discoverRules, inlineCommands } from "#src/vendor/markdown.ts";
 import { componentPaths } from "#src/vendor/paths.ts";
@@ -92,4 +93,25 @@ const loadRules = async (
   return discoverRules(root, targets, report);
 };
 
-export { loadCommands, loadRules, loadSkills };
+const loadAgents = async (
+  root: string,
+  spec: FormatSpec,
+  raw: JsonRecord,
+  expand: ExpandBody,
+  report: Report,
+): Promise<PluginAgent[]> => {
+  if (!spec.agents) {
+    return [];
+  }
+  // Declared paths replace the default `agents/` directory for both Claude and Cursor.
+  const targets =
+    raw["agents"] === undefined
+      ? [path.join(root, "agents")]
+      : componentPaths(raw["agents"], root, "agents", report);
+  const agents = await discoverAgents(root, targets, report);
+  return expand === undefined
+    ? agents
+    : agents.map((agent) => Object.assign(agent, { system: expand(agent.system) }));
+};
+
+export { loadAgents, loadCommands, loadRules, loadSkills };

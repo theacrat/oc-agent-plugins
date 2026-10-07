@@ -5,7 +5,7 @@ const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 const FORMATS = ["agent-plugins", "claude", "codex", "cursor"] as const;
 type Format = (typeof FORMATS)[number];
 
-const COMPONENTS = ["skills", "mcp", "commands", "rules"] as const;
+const COMPONENTS = ["skills", "mcp", "commands", "rules", "agents"] as const;
 type Component = (typeof COMPONENTS)[number];
 
 interface Diagnostic {
@@ -61,6 +61,24 @@ interface PluginRule {
   readonly content: string;
 }
 
+interface PermissionRule {
+  readonly action: string;
+  readonly resource: string;
+  readonly effect: "allow" | "ask" | "deny";
+}
+
+interface PluginAgent {
+  readonly name: string;
+  readonly description?: string;
+  readonly system: string;
+  readonly mode: "primary" | "subagent" | "all";
+  // `provider/model`; vendor aliases like `sonnet` or `inherit` aren't OpenCode models and are dropped.
+  readonly model?: string;
+  readonly color?: string;
+  readonly steps?: number;
+  readonly permissions: readonly PermissionRule[];
+}
+
 interface StdioServer {
   readonly type: "stdio";
   readonly command: string;
@@ -86,6 +104,7 @@ interface AgentPlugin {
   readonly servers: Readonly<Record<string, PluginServer>>;
   readonly commands: readonly PluginCommand[];
   readonly rules: readonly PluginRule[];
+  readonly agents: readonly PluginAgent[];
 }
 
 interface LoadResult {
@@ -104,6 +123,8 @@ export type {
   Format,
   LoadResult,
   Manifest,
+  PermissionRule,
+  PluginAgent,
   PluginCommand,
   PluginRule,
   PluginServer,

@@ -217,4 +217,4 @@ const discoverRules = async (
   return rules.filter((rule) => rule !== undefined);
 };
 
-export { discoverCommands, discoverRules, findFiles, inlineCommands };
+export { discoverCommands, discoverRules, findAll, findFiles, inlineCommands };

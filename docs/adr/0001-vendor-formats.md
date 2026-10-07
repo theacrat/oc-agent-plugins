@@ -72,7 +72,7 @@ Containment still applies. A `./` command or `cwd` must resolve inside the plugi
 
 ### Components not mapped
 
-Hooks, agents, LSP servers, output styles, apps and `userConfig` are reported as unsupported for each plugin, so users can see what they're missing. They aren't errors.
+Hooks, LSP servers, output styles, apps and `userConfig` are reported as unsupported for each plugin, so users can see what they're missing. They aren't errors.
 
 ### Options
 
@@ -98,3 +98,7 @@ Run against the 76 plugins installed for Claude Code and Codex on the author's m
 - Plugin names must stay unique across formats. The first one found wins, as before.
 - The Agent Plugins loader keeps its strict conformance. Vendor parsers are lenient, because their hosts are, and they report problems instead of rejecting the plugin.
 - `/agent-plugins` shows the format next to each plugin.
+
+## Agent mapping correction
+
+OpenCode has native agents, and `ctx.agent.transform` can create a new agent through `editor.update` on a new ID. Verified in a running server, despite the absence of an explicit `add` method. Claude and Cursor agents now register as namespaced subagents, with conservative tool permission mapping, metadata, prompt path substitution and an `agents` component toggle. The earlier statement that agents have no OpenCode equivalent was incorrect.

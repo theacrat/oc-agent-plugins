@@ -10,6 +10,7 @@ import {
   alwaysRules,
   formatStatus,
   scopeComponents,
+  toAgentInfo,
   toCommands,
   toServerConfigs,
   toSkillInfo,
@@ -142,9 +143,23 @@ export default Plugin.define({
     const state: State = { current: await load() };
     const reload = async () => {
       state.current = await load();
-      await Promise.all([ctx.skill.reload(), ctx.mcp.reload(), ctx.command.reload()]);
+      await Promise.all([
+        ctx.skill.reload(),
+        ctx.mcp.reload(),
+        ctx.command.reload(),
+        ctx.agent.reload(),
+      ]);
     };
     await registerSkillsAndMcp(ctx, options, state);
+    if (options.components.has("agents")) {
+      await ctx.agent.transform((editor) => {
+        for (const agent of state.current.plugins.flatMap(toAgentInfo)) {
+          editor.update(agent.id, (draft) => {
+            Object.assign(draft, agent);
+          });
+        }
+      });
+    }
     await registerCommands(ctx, options, state, reload);
   },
 });
