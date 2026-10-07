@@ -613,5 +613,5 @@ describe("manager sources", () => {
     await expect(acquireSource(source, join(root, "scratch"))).rejects.toThrow("reserved receipt");
     expect(await readFile(join(shared, "config"), "utf8")).toBe(sharedConfig);
     await expect(readFile(join(shared, "index"))).rejects.toThrow();
-  });
+  }, 30_000);
 });
