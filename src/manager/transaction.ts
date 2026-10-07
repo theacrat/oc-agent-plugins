@@ -30,6 +30,12 @@ async function checkTarget(source: string, target: string | undefined): Promise<
   }
 }
 
+async function checkRollback(destination: string, cause: unknown): Promise<void> {
+  if (await exists(destination)) {
+    throw new Error("Rollback collision; transaction journal retained", { cause });
+  }
+}
+
 async function transact(transaction: Transaction): Promise<void> {
   const { source, target, backup, stage, state, verify, destroy, boundary } = transaction;
   const journal = path.join(state, "journal.json");
@@ -60,13 +66,12 @@ async function transact(transaction: Transaction): Promise<void> {
     // A failed rollback deliberately keeps the journal, rather than guessing ownership.
     if (committed && target) {
       await verify(target);
+      await checkRollback(stage ?? source, error);
       await rename(target, stage ?? source);
     }
     if (backedUp && backup) {
       await verify(backup);
-      if (await exists(source)) {
-        throw new Error("Rollback collision; transaction journal retained", { cause: error });
-      }
+      await checkRollback(source, error);
       await rename(backup, source);
     }
     if (stage && (await exists(stage))) {

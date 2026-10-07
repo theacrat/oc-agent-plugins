@@ -1,7 +1,9 @@
 import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import nodePath from "node:path";
 
-const { basename, dirname, join, resolve, sep } = nodePath;
+import type { Installation } from "./types.ts";
+
+const { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } = nodePath;
 
 function validateName(name: string): void {
   if (
@@ -68,15 +70,22 @@ async function validateTree(directory: string): Promise<void> {
   );
 }
 
+function contains(parent: string, child: string): boolean {
+  const difference = relative(parent, child);
+  return (
+    difference === "" ||
+    (!isAbsolute(difference) && difference !== ".." && !difference.startsWith(`..${sep}`))
+  );
+}
+
 async function validateSource(source: string, targets: readonly string[]): Promise<void> {
   const canonical = await realpath(source);
+  if (canonical === parse(canonical).root) {
+    throw new Error("Filesystem root cannot be a plugin source");
+  }
   for (const target of targets) {
     const absolute = resolve(target);
-    if (
-      canonical === absolute ||
-      canonical.startsWith(`${absolute}${sep}`) ||
-      absolute.startsWith(`${canonical}${sep}`)
-    ) {
+    if (contains(absolute, canonical) || contains(canonical, absolute)) {
       throw new Error("Source and store directories must not overlap");
     }
   }
@@ -102,9 +111,25 @@ async function stateProblems(state: string): Promise<string[]> {
   return problems;
 }
 
+async function stateInventory(state: string): Promise<Installation[]> {
+  const problems = await stateProblems(state);
+  return problems.length === 0
+    ? []
+    : [
+        {
+          directory: state,
+          enabled: false,
+          managed: false,
+          name: ".agent-plugins-manager",
+          problem: problems.join("\n"),
+        },
+      ];
+}
+
 export {
   exists,
   safeDirectory,
+  stateInventory,
   stateProblems,
   storePaths,
   validateName,

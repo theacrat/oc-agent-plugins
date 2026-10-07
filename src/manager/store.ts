@@ -5,7 +5,7 @@ import { withLock } from "./lock.ts";
 import {
   exists,
   safeDirectory,
-  stateProblems,
+  stateInventory,
   storePaths,
   validateName,
   validateSource,
@@ -92,6 +92,7 @@ async function listInstallations(root: string, deps: StoreDependencies): Promise
     }),
   );
   const result = groups.flat();
+  result.push(...(await stateInventory(paths.state)));
   return result.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -295,9 +296,14 @@ interface StoreDiagnostics {
 async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagnostics> {
   const paths = storePaths(root);
   const installations = await listInstallations(root, deps);
-  const problems = installations.flatMap((entry) =>
-    entry.problem ? [`${entry.name}: ${entry.problem}`] : [],
-  );
+  const problems = installations.flatMap((entry) => {
+    if (!entry.problem) {
+      return [];
+    }
+    return entry.directory === paths.state
+      ? entry.problem.split("\n")
+      : [`${entry.name}: ${entry.problem}`];
+  });
   const names = new Set<string>();
   for (const entry of installations) {
     if (names.has(entry.name)) {
@@ -305,7 +311,6 @@ async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagn
     }
     names.add(entry.name);
   }
-  problems.push(...(await stateProblems(paths.state)));
   return { installations, problems };
 }
 

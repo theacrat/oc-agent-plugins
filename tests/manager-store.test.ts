@@ -1,8 +1,19 @@
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import nodePath from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { validateSource } from "#src/manager/paths.ts";
 import {
   doctor,
   install,
@@ -78,6 +89,92 @@ afterEach(async () => {
 });
 
 describe("manager store", () => {
+  it("retains the journal and unmanaged destination on a disable rollback collision", async () => {
+    await install(root, source, deps);
+    const active = join(root, "demo");
+    const disabled = join(nodePath.dirname(root), ".agent-plugins-disabled", "demo");
+    const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+    const original = await lstat(active);
+    let collisionInode: number | undefined;
+    await expect(
+      setEnabled(root, "demo", false, {
+        ...deps,
+        boundary: async (boundary) => {
+          if (boundary === "committed") {
+            await mkdir(active);
+            const collision = await lstat(active);
+            collisionInode = collision.ino;
+            throw new Error("injected failure");
+          }
+        },
+      }),
+    ).rejects.toThrow("Rollback collision");
+    const preserved = await lstat(active);
+    const snapshot = await lstat(disabled);
+    expect(preserved.ino).toBe(collisionInode);
+    expect(await readdir(active)).toEqual([]);
+    expect(snapshot.ino).toBe(original.ino);
+    expect(await readFile(join(disabled, "payload.txt"), "utf8")).toBe("first");
+    expect(await readFile(join(state, "journal.json"), "utf8")).toContain(disabled);
+  });
+
+  it("rejects filesystem roots before invoking snapshot callbacks", async () => {
+    const filesystemRoot = nodePath.parse(directory).root;
+    await expect(validateSource(filesystemRoot, [root])).rejects.toThrow("Filesystem root");
+    let copied = false;
+    await expect(
+      install(
+        root,
+        { ...source, directory: filesystemRoot },
+        {
+          ...deps,
+          snapshotDirectory: async () => {
+            copied = true;
+            await Promise.resolve();
+          },
+        },
+      ),
+    ).rejects.toThrow("Filesystem root");
+    expect(copied).toBe(false);
+    await expect(validateSource(directory, [root])).rejects.toThrow("overlap");
+    await expect(validateSource(source.directory, [directory])).rejects.toThrow("overlap");
+    await validateSource(source.directory, [join(directory, "source-sibling", "agent-plugins")]);
+  });
+
+  it.each(["journal.json", "lock"])(
+    "surfaces %s in empty and populated read-only inventory",
+    async (entry) => {
+      const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+      await mkdir(state, { recursive: true });
+      const marker = join(state, entry);
+      await (entry === "lock" ? mkdir(marker) : writeFile(marker, "interrupted"));
+      const before = await lstat(marker);
+      const empty = await listInstallations(root, deps);
+      expect(empty).toHaveLength(1);
+      expect(empty[0]).toMatchObject({
+        directory: state,
+        enabled: false,
+        managed: false,
+        name: ".agent-plugins-manager",
+      });
+      expect(empty[0]?.problem).toContain(
+        entry === "lock" ? "Store lock exists" : "Interrupted transaction",
+      );
+      await mkdir(join(root, "unmanaged"), { recursive: true });
+      const populated = await listInstallations(root, deps);
+      expect(populated).toHaveLength(2);
+      const diagnostics = await doctor(root, deps);
+      expect(diagnostics.problems).toHaveLength(1);
+      const after = await lstat(marker);
+      expect(after.ino).toBe(before.ino);
+      if (entry === "journal.json") {
+        expect(await readFile(marker, "utf8")).toBe("interrupted");
+      } else {
+        expect(await readdir(marker)).toEqual([]);
+      }
+    },
+  );
+
   it("rolls back failed disable and uninstall", async () => {
     await install(root, source, deps);
     const failing: StoreDependencies = {
