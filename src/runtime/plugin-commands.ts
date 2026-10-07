@@ -6,6 +6,7 @@ import type { Options } from "#src/options.ts";
 import { commandInjectionForPlugin } from "#src/options.ts";
 import type { registerCompatibility } from "#src/runtime/compatibility.ts";
 import { addLspExportCommand } from "#src/runtime/lsp.ts";
+import { addManagerCommand } from "#src/runtime/manager-command.ts";
 import { describeInjections, injectShell, shellRunner } from "#src/shell.ts";
 import { renderCommand } from "#src/template.ts";
 import type { Rendered } from "#src/template.ts";
@@ -63,6 +64,7 @@ const registerCommands = async (
         });
       }
     }
+    addManagerCommand(ctx, editor);
   });
 };
 
