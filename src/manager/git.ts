@@ -122,6 +122,7 @@ async function git(
     const result = await executeFile(
       "git",
       [
+        `--git-dir=${pathModule.join(scratch, "repository")}`,
         "-c",
         "core.hooksPath=/dev/null",
         "-c",

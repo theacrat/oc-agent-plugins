@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 // eslint-disable-next-line import/no-nodejs-modules
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fingerprintDirectory } from "#src/manager/fingerprint.ts";
 import { readMetadata } from "#src/manager/metadata.ts";
@@ -30,7 +30,15 @@ const executeFile = promisify(execFile);
 const runGit = async (directory: string, args: readonly string[]): Promise<string> => {
   const result = await executeFile(
     "git",
-    ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args],
+    [
+      `--git-dir=${directory.endsWith(".git") ? directory : join(directory, ".git")}`,
+      ...(directory.endsWith(".git") ? [] : [`--work-tree=${directory}`]),
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      ...args,
+    ],
     {
       cwd: directory,
       encoding: "utf8",
@@ -46,6 +54,7 @@ const runGit = async (directory: string, args: readonly string[]): Promise<strin
 };
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(
     temporary.splice(0).map(async (path) => rm(path, { force: true, recursive: true })),
   );
@@ -188,6 +197,15 @@ describe("manager sources", () => {
 
   it("extracts disposable bare Git sources, resolves updated refs and keeps pinned commits", async () => {
     const root = await fixture();
+    const shared = join(root, "shared.git");
+    await mkdir(shared);
+    const sharedConfig = "[core]\n bare = false\n";
+    await writeFile(join(shared, "config"), sharedConfig);
+    vi.stubEnv("GIT_DIR", shared);
+    vi.stubEnv("GIT_COMMON_DIR", shared);
+    vi.stubEnv("GIT_WORK_TREE", root);
+    vi.stubEnv("GIT_INDEX_FILE", join(shared, "index"));
+    vi.stubEnv("GIT_CONFIG", join(shared, "config"));
     const repository = join(root, "work");
     await mkdir(repository);
     await runGit(repository, ["init", "-b", "main"]);
@@ -198,7 +216,10 @@ describe("manager sources", () => {
     await runGit(repository, ["commit", "-m", "first"]);
     const first = await runGit(repository, ["rev-parse", "HEAD"]);
     const bare = join(root, "bare.git");
-    await runGit(root, ["clone", "--bare", repository, bare]);
+    await mkdir(bare);
+    await runGit(bare, ["init", "--bare"]);
+    await runGit(bare, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await runGit(repository, ["push", bare, "main"]);
     const source = await parseSource(pathToFileURL(bare).href, {
       cwd: root,
       ref: "main",
@@ -254,5 +275,7 @@ describe("manager sources", () => {
     await runGit(repository, ["commit", "-m", "receipt"]);
     await runGit(repository, ["push", bare, "main"]);
     await expect(acquireSource(source, join(root, "scratch"))).rejects.toThrow("reserved receipt");
+    expect(await readFile(join(shared, "config"), "utf8")).toBe(sharedConfig);
+    await expect(readFile(join(shared, "index"))).rejects.toThrow();
   });
 });
