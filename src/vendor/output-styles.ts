@@ -16,6 +16,45 @@ interface PluginOutputStyle {
   readonly forceForPlugin: boolean;
 }
 
+const parseStyle = (
+  text: string,
+  file: { readonly path: string; readonly name: string },
+  reportError: (message: string) => void,
+  expand?: Placeholders["expandContent"],
+): PluginOutputStyle | undefined => {
+  const parsed = parseFrontmatter(text, false);
+  if (!parsed.ok) {
+    reportError("output style could not be parsed");
+    return;
+  }
+  const invalidFlag = ["keep-coding-instructions", "force-for-plugin"].find(
+    (flag) => parsed.data[flag] !== undefined && typeof parsed.data[flag] !== "boolean",
+  );
+  if (invalidFlag !== undefined) {
+    reportError(`output style ${invalidFlag} must be a boolean`);
+    return;
+  }
+  if (parsed.body === "") {
+    return;
+  }
+  let content: string;
+  try {
+    content = expand?.(parsed.body) ?? parsed.body;
+  } catch {
+    reportError("output style body configuration expansion failed");
+    return;
+  }
+  const description = optionalString(parsed.data["description"]);
+  return {
+    content,
+    forceForPlugin: parsed.data["force-for-plugin"] === true,
+    keepCodingInstructions: parsed.data["keep-coding-instructions"] === true,
+    name: optionalString(parsed.data["name"]) ?? file.name,
+    path: file.path,
+    ...(description === undefined ? {} : { description }),
+  };
+};
+
 const loadOutputStyles = async (
   root: string,
   declared: unknown,
@@ -34,32 +73,21 @@ const loadOutputStyles = async (
     if (read === undefined) {
       continue;
     }
-    const parsed = read.ok ? parseFrontmatter(read.text, false) : read;
-    if (!parsed.ok) {
+    const reportError = (message: string) => {
       report({
-        message: "output style could not be parsed",
+        message,
         severity: "error",
         source: path.relative(root, file.path),
       });
+    };
+    if (!read.ok) {
+      reportError("output style could not be parsed");
       continue;
     }
-    for (const flag of ["keep-coding-instructions", "force-for-plugin"]) {
-      if (parsed.data[flag] !== undefined && typeof parsed.data[flag] !== "boolean") {
-        throw new Error("Output style flags must be booleans");
-      }
+    const style = parseStyle(read.text, file, reportError, expand);
+    if (style !== undefined) {
+      found.push(style);
     }
-    const description = optionalString(parsed.data["description"]);
-    if (parsed.body === "") {
-      continue;
-    }
-    found.push({
-      content: expand?.(parsed.body) ?? parsed.body,
-      forceForPlugin: parsed.data["force-for-plugin"] === true,
-      keepCodingInstructions: parsed.data["keep-coding-instructions"] === true,
-      name: optionalString(parsed.data["name"]) ?? file.name,
-      path: file.path,
-      ...(description === undefined ? {} : { description }),
-    });
   }
   return [...new Map(found.map((style) => [style.name, style])).values()];
 };

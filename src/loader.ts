@@ -3,7 +3,7 @@ import path from "node:path";
 import { loadAgentPlugin } from "#src/agent-plugins-loader.ts";
 import { listDir, realOrSelf, resolveWithin } from "#src/paths.ts";
 import { FORMATS } from "#src/types.ts";
-import type { AgentPlugin, Diagnostic, Format, LoadResult, Report } from "#src/types.ts";
+import type { AgentPlugin, Component, Diagnostic, Format, LoadResult, Report } from "#src/types.ts";
 import type { AppEndpoint } from "#src/vendor/bridges.ts";
 import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
 import { hasVendorManifest, loadVendorPlugin } from "#src/vendor/loader.ts";
@@ -15,6 +15,7 @@ import type { MarketplaceEntry } from "#src/vendor/marketplace.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface LoadOptions {
+  readonly components?: ReadonlySet<Component> | ((name: string) => ReadonlySet<Component>);
   readonly pluginAppEndpoints?: Readonly<Record<string, Readonly<Record<string, AppEndpoint>>>>;
   readonly configuration?: Readonly<Record<string, PluginConfigurationOptions>>;
   readonly trustedHooks?: readonly string[];
@@ -51,6 +52,7 @@ const safeVendorLoad = async (candidate: Candidate, options: LoadOptions, report
       {
         appEndpoints: options.appEndpoints ?? {},
         configuration: options.configuration ?? {},
+        ...(options.components === undefined ? {} : { components: options.components }),
         dataRoot: options.dataRoot,
         env: options.env ?? {},
         pluginAppEndpoints: options.pluginAppEndpoints ?? {},

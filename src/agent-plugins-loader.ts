@@ -5,7 +5,8 @@ import { parseManifest } from "#src/manifest.ts";
 import { discoverServers } from "#src/mcp.ts";
 import { ensureDir, readText, resolveWithin } from "#src/paths.ts";
 import { discoverSkills } from "#src/skills.ts";
-import type { AgentPlugin, Diagnostic, Report } from "#src/types.ts";
+import type { AgentPlugin, Diagnostic, PluginServer, Report } from "#src/types.ts";
+import { COMPONENTS } from "#src/types.ts";
 
 const manifestWarnings = (warnings: readonly string[], source: string): Diagnostic[] =>
   warnings.map((message) => ({ message, severity: "warning", source }));
@@ -13,6 +14,32 @@ const manifestWarnings = (warnings: readonly string[], source: string): Diagnost
 const disabledPlugin = (name: string): PluginLoad => ({
   diagnostics: [{ message: "disabled by pluginSettings", severity: "warning", source: name }],
 });
+
+const discoverComponents = async (
+  root: string,
+  name: string,
+  options: LoadOptions,
+  report: Report,
+) => {
+  const dataDir = path.join(options.dataRoot, name);
+  const ctx = { dataDir, platform: options.platform ?? process.platform, root };
+  const components =
+    typeof options.components === "function"
+      ? options.components(name)
+      : (options.components ?? new Set(COMPONENTS));
+  const emptyServers: Record<string, PluginServer> = {};
+  const [skills, servers] = await Promise.all([
+    components.has("skills") ? discoverSkills(root, report) : [],
+    components.has("mcp") ? discoverServers(ctx, report) : emptyServers,
+  ]);
+  if (Object.values(servers).some((server) => server.type === "stdio")) {
+    const error = await ensureDir(dataDir);
+    if (error !== undefined) {
+      report({ message: error, severity: "error", source: "mcp.json" });
+    }
+  }
+  return { dataDir, servers, skills };
+};
 
 const loadAgentPlugin = async (root: string, options: LoadOptions): Promise<PluginLoad> => {
   const manifestFile = await resolveWithin(root, path.join(root, "plugin.json"));
@@ -40,18 +67,12 @@ const loadAgentPlugin = async (root: string, options: LoadOptions): Promise<Plug
     diagnostics.push({ ...diagnostic, source: `${manifest.name}/${diagnostic.source}` });
   };
 
-  const dataDir = path.join(options.dataRoot, manifest.name);
-  const ctx = { dataDir, platform: options.platform ?? process.platform, root };
-  const [skills, servers] = await Promise.all([
-    discoverSkills(root, report),
-    discoverServers(ctx, report),
-  ]);
-  if (Object.values(servers).some((server) => server.type === "stdio")) {
-    const error = await ensureDir(dataDir);
-    if (error !== undefined) {
-      report({ message: error, severity: "error", source: "mcp.json" });
-    }
-  }
+  const { dataDir, servers, skills } = await discoverComponents(
+    root,
+    manifest.name,
+    options,
+    report,
+  );
   const plugin: AgentPlugin = {
     agents: [],
     commands: [],

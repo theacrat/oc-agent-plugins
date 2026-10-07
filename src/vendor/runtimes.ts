@@ -1,14 +1,20 @@
 import type { JsonRecord } from "#src/json.ts";
 import { WORKFLOW_BLOCKER } from "#src/runtime/workflows.ts";
-import type { Report } from "#src/types.ts";
+import { COMPONENTS } from "#src/types.ts";
+import type { Component, Report } from "#src/types.ts";
 import { loadChannels } from "#src/vendor/channels.ts";
 import { loadMonitors } from "#src/vendor/monitors.ts";
 import { loadThemes, THEME_BLOCKER } from "#src/vendor/themes.ts";
 import { loadWorkflows } from "#src/vendor/workflows.ts";
 
-const loadRuntimeComponents = async (root: string, raw: JsonRecord, report: Report) => {
+const loadRuntimeComponents = async (
+  root: string,
+  raw: JsonRecord,
+  report: Report,
+  components: ReadonlySet<Component> = new Set(COMPONENTS),
+) => {
   const [monitors, workflows, themes] = await Promise.all([
-    loadMonitors(root, raw, report),
+    components.has("monitors") ? loadMonitors(root, raw, report) : [],
     loadWorkflows(root, raw, report),
     loadThemes(root, raw, report),
   ]);

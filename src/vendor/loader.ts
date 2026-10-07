@@ -2,7 +2,7 @@ import path from "node:path";
 
 import type { JsonRecord } from "#src/json.ts";
 import { readText, resolveWithin } from "#src/paths.ts";
-import type { AgentPlugin, Manifest, Report } from "#src/types.ts";
+import type { AgentPlugin, Component, Manifest, Report } from "#src/types.ts";
 import { pluginActivation } from "#src/vendor/activation.ts";
 import type { AppEndpoint } from "#src/vendor/bridges.ts";
 import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
@@ -13,6 +13,7 @@ import { parseVendorManifest } from "#src/vendor/manifest.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface VendorLoadOptions {
+  readonly components?: ReadonlySet<Component> | ((name: string) => ReadonlySet<Component>);
   readonly pluginAppEndpoints?: Readonly<Record<string, Readonly<Record<string, AppEndpoint>>>>;
   readonly configuration?: Readonly<Record<string, PluginConfigurationOptions>>;
   readonly trustedHooks?: readonly string[];

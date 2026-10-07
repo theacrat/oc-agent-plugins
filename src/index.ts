@@ -69,6 +69,7 @@ const loadConfiguredPlugins = async (
 ): Promise<LoadResult> => {
   const result = await loadAll(options.searchPaths, {
     appEndpoints: options.appEndpoints,
+    components: (name) => componentsForPlugin(options, name),
     configuration: options.configuration,
     dataRoot: options.dataRoot,
     env: process.env,
