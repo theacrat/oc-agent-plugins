@@ -360,6 +360,7 @@ describe("format precedence and toggles", () => {
     ]);
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
+      "/home/u/.config/opencode/agent-plugins",
       "/p/.agents/plugins",
       "/p/.opencode/agent-plugins",
       "/home/u/plugins",

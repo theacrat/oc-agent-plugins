@@ -44,6 +44,7 @@ describe("grouped public settings", () => {
     expect(diagnostics).toEqual([]);
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
+      "/home/u/.config/opencode/agent-plugins",
       "/project/.agents/plugins",
       "/project/.opencode/agent-plugins",
       "/home/u/plugins",
@@ -96,6 +97,7 @@ describe("grouped public settings", () => {
     const { diagnostics, options } = parse({ discovery: { vendorDirs: true } });
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
+      "/home/u/.config/opencode/agent-plugins",
       "/project/.agents/plugins",
       "/project/.opencode/agent-plugins",
     ]);

@@ -36,6 +36,7 @@ interface OptionsInput {
   readonly project: string;
   readonly home: string;
   readonly dataHome: string;
+  readonly configHome?: string;
 }
 
 const expandHome = (value: string, home: string) => value.replace(/^~(?=\/|$)/u, home);
@@ -61,6 +62,7 @@ const parseOptions = (input: OptionsInput, report: Report): Options => {
     formats: new Set(FORMATS.filter((format) => settings.formats[format] !== false)),
     searchPaths: [
       path.join(home, ".agents", "plugins"),
+      path.join(input.configHome ?? path.join(home, ".config"), "opencode", "agent-plugins"),
       path.join(project, ".agents", "plugins"),
       path.join(project, ".opencode", "agent-plugins"),
       ...(settings.paths ?? []).map((entry) => path.resolve(project, expandHome(entry, home))),

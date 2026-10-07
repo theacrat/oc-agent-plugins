@@ -32,6 +32,7 @@ const main = async () => {
   const diagnostics: Diagnostic[] = [];
   const options = parseOptions(
     {
+      configHome: process.env["XDG_CONFIG_HOME"] ?? path.join(homedir(), ".config"),
       dataHome: path.join(process.cwd(), ".agent-plugins-data"),
       home: homedir(),
       project: process.cwd(),

@@ -38,6 +38,7 @@ const readOptions = (ctx: Context) => {
   const diagnostics: Diagnostic[] = [];
   const options = parseOptions(
     {
+      configHome: process.env["XDG_CONFIG_HOME"] ?? path.join(home, ".config"),
       dataHome: process.env["XDG_DATA_HOME"] ?? path.join(home, ".local", "share"),
       home,
       project: ctx.location.project.directory,
