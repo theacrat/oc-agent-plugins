@@ -26,6 +26,8 @@ Project scope is the default, using the current directory's `.opencode/agent-plu
 
 Successful JSON results are written to stdout. Failures write a JSON error object to stderr and exit with status 1. `update --all` runs serially and stops on the first failure; earlier successful updates are retained.
 
+`help --json` returns an object with `command` and `help` fields. `version --json` returns a `version` field.
+
 Installations are copied snapshots with ownership receipts and content fingerprints. Updates refresh the recorded local source or Git ref. Edited or unmanaged packages are never overwritten; a plugin's persistent runtime data is retained on uninstall. Disable/enable keeps a managed package outside/inside discovery without changing OpenCode settings.
 
 The CLI does not start OpenCode, connect MCP servers, execute package scripts or grant hooks/monitor trust. You still need to load the OpenCode adapter separately and configure trust explicitly when needed. After changing installations, run `/agent-plugins` in OpenCode to rescan.

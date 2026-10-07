@@ -20,6 +20,8 @@ Secure payload reads require Linux descriptor-path verification through `/proc/s
 
 Mutations acquire a target-directory lock, stage on the same filesystem, validate and fingerprint before an atomic rename, and roll back replacements on errors. Receipts are committed with the package. Updates preserve plugin identity and reject local edits rather than discarding user work. Interrupted operation metadata must be detected and handled safely. Disable/enable moves managed snapshots into/out of a sibling hidden storage directory; uninstall removes only a verified managed snapshot and retains persistent runtime data.
 
+Normal validation failures clean up the newly owned staging directory and leave the prior installation unchanged. Cleanup must not delete a replaced or externally modified stage. Journals and backups from interrupted mutations remain available for manual recovery.
+
 Commands are `install`, `update <name>|--all`, `list`, `info`, `enable`, `disable`, `uninstall` (alias `remove`), `doctor`, `help` and `version`. `--json` gives machine-readable output. Missing packages, invalid arguments, conflicts and unsafe paths fail with nonzero exit codes and actionable messages. Enabling an installation does not grant hooks/monitor trust.
 
 ## Packaging and verification
