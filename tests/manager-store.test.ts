@@ -192,7 +192,9 @@ describe.each(["native", "windows fallback"])("manager store (%s)", (mode) => {
             return;
           }
           const entries = await readdir(state);
-          const name = entries.find((entry) => entry.startsWith("stage-"));
+          const name = entries.find(
+            (entry) => entry.startsWith("stage-") && !entry.endsWith(".backup"),
+          );
           if (!name) {
             throw new Error("Missing test stage");
           }
@@ -209,6 +211,128 @@ describe.each(["native", "windows fallback"])("manager store (%s)", (mode) => {
     expect(await readFile(join(replacement, "payload.txt"), "utf8")).toBe("first");
     expect(await readFile(join(replacement, RECEIPT), "utf8")).toContain('"schemaVersion": 1');
     expect(await readdir(root)).toEqual([]);
+  });
+
+  it.each([
+    { failure: "journalled", updating: false },
+    { failure: "journalled", updating: true },
+    { failure: "backed-up", updating: true },
+  ])(
+    "rejects identical stage replacements at $failure (update=$updating)",
+    async ({ failure, updating }) => {
+      if (updating) {
+        await install(root, source, deps);
+      }
+      const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+      let stage: string | undefined;
+      const replacing: StoreDependencies = {
+        ...deps,
+        boundary: async (boundary) => {
+          if (boundary !== failure) {
+            return;
+          }
+          const entries = await readdir(state);
+          const name = entries.find(
+            (entry) => entry.startsWith("stage-") && !entry.endsWith(".backup"),
+          );
+          if (!name) {
+            throw new Error("Missing test stage");
+          }
+          stage = join(state, name);
+          const original = join(directory, "original-stage");
+          await rename(stage, original);
+          await cp(original, stage, { recursive: true });
+        },
+      };
+      await expect(
+        updating ? update(root, "demo", source, replacing) : install(root, source, replacing),
+      ).rejects.toThrow("Staging directory replaced");
+      if (!stage) {
+        throw new Error("Missing test stage");
+      }
+      expect(await readFile(join(stage, "payload.txt"), "utf8")).toBe("first");
+      const diagnostics = await doctor(root, deps);
+      expect(diagnostics.problems).toContain(
+        "Interrupted transaction: journal.json requires manual recovery",
+      );
+      if (updating) {
+        expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("first");
+      } else {
+        expect(await readdir(root)).toEqual([]);
+      }
+    },
+  );
+
+  it.each([
+    { failing: false, updating: false },
+    { failing: true, updating: false },
+    { failing: false, updating: true },
+    { failing: true, updating: true },
+  ])(
+    "preserves identical published replacements (update=$updating, failure=$failing)",
+    async ({ failing, updating }) => {
+      if (updating) {
+        await install(root, source, deps);
+      }
+      const target = join(root, "demo");
+      const replacing: StoreDependencies = {
+        ...deps,
+        boundary: async (boundary) => {
+          if (boundary !== "committed") {
+            return;
+          }
+          const original = join(directory, "published-stage");
+          await rename(target, original);
+          await cp(original, target, { recursive: true });
+          if (failing) {
+            throw new Error("injected replacement failure");
+          }
+        },
+      };
+      await expect(
+        updating ? update(root, "demo", source, replacing) : install(root, source, replacing),
+      ).rejects.toThrow("Staging directory replaced");
+      expect(await readFile(join(target, "payload.txt"), "utf8")).toBe("first");
+      const diagnostics = await doctor(root, deps);
+      expect(diagnostics.problems).toContain(
+        "Interrupted transaction: journal.json requires manual recovery",
+      );
+    },
+  );
+
+  it("preserves an identical replacement during collision cleanup", async () => {
+    await install(root, source, deps);
+    let stage: string | undefined;
+    const replacing: StoreDependencies = {
+      ...deps,
+      boundary: async (boundary) => {
+        if (boundary === "staged") {
+          const entries = await readdir(join(nodePath.dirname(root), ".agent-plugins-manager"));
+          const name = entries.find((entry) => entry.startsWith("stage-"));
+          if (!name) {
+            throw new Error("Missing test stage");
+          }
+          stage = join(nodePath.dirname(root), ".agent-plugins-manager", name);
+        }
+      },
+      readMetadata: async (location) => {
+        const metadata = await deps.readMetadata(location);
+        if (stage === location) {
+          stage = undefined;
+          const original = join(directory, "collision-stage");
+          await rename(location, original);
+          await cp(original, location, { recursive: true });
+          stage = location;
+        }
+        return metadata;
+      },
+    };
+    await expect(install(root, source, replacing)).rejects.toThrow("Staging directory replaced");
+    if (!stage) {
+      throw new Error("Missing test stage");
+    }
+    expect(await readFile(join(stage, "payload.txt"), "utf8")).toBe("first");
+    expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("first");
   });
   it.each(["payload", "receipt"] as const)(
     "retains validated stage %s edits after a staged-boundary failure",
@@ -486,7 +610,8 @@ describe.each(["native", "windows fallback"])("manager store (%s)", (mode) => {
     expect(await readdir(active)).toEqual([]);
     expect(snapshot.ino).toBe(original.ino);
     expect(await readFile(join(disabled, "payload.txt"), "utf8")).toBe("first");
-    expect(await readFile(join(state, "journal.json"), "utf8")).toContain(disabled);
+    const journal: unknown = JSON.parse(await readFile(join(state, "journal.json"), "utf8"));
+    expect(journal).toMatchObject({ target: disabled });
   });
 
   it("rejects filesystem roots before invoking snapshot callbacks", async () => {

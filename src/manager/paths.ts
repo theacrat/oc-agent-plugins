@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import nodePath from "node:path";
 
@@ -8,6 +8,10 @@ import type { Installation } from "./types.ts";
 const { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } = nodePath;
 
 type StageIdentity = Pick<Stats, "dev" | "ino" | "birthtimeMs">;
+interface StoreDiagnostics {
+  readonly installations: readonly Installation[];
+  readonly problems: readonly string[];
+}
 type StageOwner =
   | { readonly kind: "handle"; readonly handle: FileHandle; readonly identity: StageIdentity }
   | { readonly kind: "identity"; readonly identity: StageIdentity };
@@ -37,6 +41,12 @@ async function openStage(stage: string, identity: StageIdentity): Promise<StageO
       throw error;
     }
     return { identity, kind: "identity" };
+  }
+}
+
+async function closeStage(owner: StageOwner): Promise<void> {
+  if (owner.kind === "handle") {
+    await owner.handle.close();
   }
 }
 
@@ -89,6 +99,15 @@ async function checkStage(stage: string, owner: StageOwner): Promise<void> {
   ) {
     throw new Error(`Staging directory replaced; retained for inspection: ${stage}`);
   }
+}
+
+async function cleanupStage(stage: string, owner: StageOwner): Promise<void> {
+  if (!(await exists(stage))) {
+    return;
+  }
+  await checkStage(stage, owner);
+  // Only this exact mkdtemp directory is owned. rm unlinks nested symlinks, never their targets.
+  await rm(stage, { recursive: true });
 }
 
 function storePaths(root: string) {
@@ -176,6 +195,8 @@ async function stateInventory(state: string): Promise<Installation[]> {
 
 export {
   checkStage,
+  cleanupStage,
+  closeStage,
   exists,
   openStage,
   safeDirectory,
@@ -186,4 +207,4 @@ export {
   validateSource,
   validateTree,
 };
-export type { StageOwner };
+export type { StageOwner, StoreDiagnostics };
