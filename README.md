@@ -24,9 +24,15 @@ npx oc-agent-plugins doctor
 
 Project scope is the default, using the current directory's `.opencode/agent-plugins/`. Use `--project /path/to/project` for an explicit project or `--global` for OpenCode's global vendor directory. `OPENCODE_CONFIG_DIR` and the XDG/home fallback are respected. `--json` gives machine-readable results.
 
+Successful JSON results are written to stdout. Failures write a JSON error object to stderr and exit with status 1. `update --all` runs serially and stops on the first failure; earlier successful updates are retained.
+
 Installations are copied snapshots with ownership receipts and content fingerprints. Updates refresh the recorded local source or Git ref. Edited or unmanaged packages are never overwritten; a plugin's persistent runtime data is retained on uninstall. Disable/enable keeps a managed package outside/inside discovery without changing OpenCode settings.
 
 The CLI does not start OpenCode, connect MCP servers, execute package scripts or grant hooks/monitor trust. You still need to load the OpenCode adapter separately and configure trust explicitly when needed. After changing installations, run `/agent-plugins` in OpenCode to rescan.
+
+Node 22.14 or newer is required. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs are supported; archives, npm packages and submodules are not installation sources.
+
+An interrupted mutation fails closed. `doctor` reports the adjacent `.agent-plugins-manager` state directory; the CLI does not automatically break locks or delete journals/backups. Before manual recovery, stop concurrent CLI commands, preserve that directory and inspect the journal's source, target and backup paths. Do not delete a lock just because it looks old. Disabled snapshots live in the adjacent `.agent-plugins-disabled` directory.
 
 Once published on npm, add `oc-agent-plugins` to OpenCode's `plugins` array. The public source is [theacrat/oc-agent-plugins](https://github.com/theacrat/oc-agent-plugins).
 

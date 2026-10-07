@@ -1,5 +1,7 @@
 import { parseArgs } from "node:util";
 
+import { validateName } from "#src/manager/paths.ts";
+
 type Command =
   | "install"
   | "update"
@@ -63,12 +65,8 @@ const validateArguments = (args: Arguments, count: number) => {
   if (["list", "doctor", "help", "version"].includes(command) && target !== undefined) {
     throw new Error(`${command} does not take a plugin name`);
   }
-  if (
-    args.target !== undefined &&
-    args.command !== "install" &&
-    (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(args.target) || args.target.includes(".."))
-  ) {
-    throw new Error("Plugin names must be safe directory names, not paths");
+  if (args.target !== undefined && args.command !== "install") {
+    validateName(args.target);
   }
 };
 

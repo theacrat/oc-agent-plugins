@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
 
+import { errorOutput } from "#src/cli/errors.ts";
 import { runCli } from "#src/cli/run.ts";
 
 const main = async () => {
@@ -17,9 +18,7 @@ const main = async () => {
       },
     });
   } catch (error) {
-    process.stderr.write(
-      `oc-agent-plugins: ${error instanceof Error ? error.message : "command failed"}\n`,
-    );
+    process.stderr.write(`${errorOutput(process.argv.slice(2), error)}\n`);
     process.exitCode = 1;
   }
 };

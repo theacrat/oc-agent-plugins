@@ -4,6 +4,10 @@ import { parseArguments } from "#src/cli/arguments.ts";
 import { locations } from "#src/cli/locations.ts";
 
 describe("CLI interface", () => {
+  it("accepts the same safe names as installation storage", () => {
+    expect(parseArguments(["info", "demo..one"]).target).toBe("demo..one");
+    expect(parseArguments(["uninstall", `demo${"a".repeat(70)}`]).target).toHaveLength(74);
+  });
   it("parses install and remote selection without granting execution trust", () => {
     expect(
       parseArguments([

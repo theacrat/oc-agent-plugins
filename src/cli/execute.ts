@@ -31,6 +31,12 @@ const named = async (manager: Manager, name: string): Promise<Installation> => {
 };
 
 const updateTargets = async (args: Arguments, manager: Manager): Promise<Result> => {
+  if (args.all) {
+    const diagnosis = await manager.doctor();
+    if (diagnosis.problems.length > 0) {
+      throw new Error(`Cannot update this scope: ${diagnosis.problems.join("; ")}`);
+    }
+  }
   const inventory = await manager.list();
   const entries = args.all
     ? inventory.filter((entry) => entry.managed)

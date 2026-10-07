@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { parseArguments } from "#src/cli/arguments.ts";
+import { errorOutput } from "#src/cli/errors.ts";
 import { execute } from "#src/cli/execute.ts";
 import type { Manager } from "#src/cli/execute.ts";
 import type { Installation } from "#src/manager/types.ts";
@@ -33,6 +34,24 @@ const manager = (): Manager => ({
 });
 
 describe("CLI command dispatch", () => {
+  it("reports machine-readable failures even for invalid arguments", () => {
+    expect(errorOutput(["info", "missing", "--json"], new Error("Missing plugin"))).toBe(
+      '{"error":"Missing plugin","exitCode":1}',
+    );
+  });
+  it("rejects update-all with interrupted scope state", async () => {
+    const backend = {
+      ...manager(),
+      doctor: vi.fn(async () => {
+        await Promise.resolve();
+        return { installations: [], problems: ["Interrupted transaction"] };
+      }),
+    };
+    await expect(execute(parseArguments(["update", "--all"]), backend)).rejects.toThrow(
+      "Interrupted transaction",
+    );
+    expect(backend.update).not.toHaveBeenCalled();
+  });
   it("updates only managed entries when all is requested", async () => {
     const backend = {
       ...manager(),
