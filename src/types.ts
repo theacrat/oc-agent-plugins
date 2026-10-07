@@ -81,7 +81,31 @@ interface PluginAgent {
   readonly permissions: readonly PermissionRule[];
 }
 
-interface StdioServer {
+interface ServerOptions {
+  readonly disabled?: boolean;
+  readonly timeout?: {
+    readonly startup?: number;
+    readonly catalog?: number;
+    readonly execution?: number;
+  };
+  readonly toolPolicy?: {
+    readonly enabled?: readonly string[];
+    readonly disabled?: readonly string[];
+    readonly approval?: "ask";
+    readonly tools?: Readonly<Record<string, { readonly approval?: "ask" }>>;
+  };
+}
+
+interface ServerOAuth {
+  readonly client_id?: string;
+  readonly client_secret?: string;
+  readonly scope?: string;
+  readonly callback_port?: number;
+  readonly redirect_uri?: string;
+  readonly auth_server_metadata_url?: string;
+}
+
+interface StdioServer extends ServerOptions {
   readonly type: "stdio";
   readonly command: string;
   readonly args: readonly string[];
@@ -89,10 +113,11 @@ interface StdioServer {
   readonly cwd: string;
 }
 
-interface StreamableHttpServer {
+interface StreamableHttpServer extends ServerOptions {
   readonly type: "streamable-http";
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
+  readonly oauth?: false | ServerOAuth;
 }
 
 type PluginServer = StdioServer | StreamableHttpServer;

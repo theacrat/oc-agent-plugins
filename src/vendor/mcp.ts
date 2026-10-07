@@ -6,27 +6,10 @@ import { checkHeaders, checkUrl } from "#src/mcp.ts";
 import type { ServerResult } from "#src/mcp.ts";
 import { ensureDir, readText, resolveWithin } from "#src/paths.ts";
 import type { PluginServer, Report } from "#src/types.ts";
+import { POLICY_FIELDS, parseServerOptions } from "#src/vendor/mcp-policy.ts";
 import { componentPaths } from "#src/vendor/paths.ts";
 import type { Placeholders } from "#src/vendor/placeholders.ts";
 
-// Vendor fields this adapter currently ignores. Some affect connection and security policy;
-// docs/compatibility-audit.md records those gaps. They must not be called harmless metadata.
-const IGNORED_FIELDS = new Set([
-  "default_tools_approval_mode",
-  "disabled",
-  "enabled",
-  "enabled_tools",
-  "env_vars",
-  "oauth",
-  "oauth_resource",
-  "omit_tools_from",
-  "startup_timeout_sec",
-  "timeout",
-  "tool_timeout_sec",
-  "tools",
-  "alwaysLoad",
-  "headersHelper",
-]);
 const STDIO_FIELDS = new Set(["type", "command", "args", "env", "cwd"]);
 const HTTP_FIELDS = new Set(["type", "url", "headers"]);
 
@@ -150,7 +133,7 @@ const transportOf = (entry: Entry): Transport => {
     return { kind: "http" };
   }
   return {
-    error: `${JSON.stringify(type)} transport is not supported; skipped`,
+    error: `${JSON.stringify(type)} transport is not supported by native MCP (remote uses Streamable HTTP only); configure a trusted external stdio transport bridge explicitly`,
     kind: "unsupported",
   };
 };
@@ -158,7 +141,7 @@ const transportOf = (entry: Entry): Transport => {
 const parseVendorServer = async (
   entry: unknown,
   ctx: VendorServerContext,
-  warn: (message: string) => void,
+  _warn: (message: string) => void,
 ): Promise<ServerResult> => {
   if (!isRecord(entry)) {
     return fail("server entry must be an object");
@@ -169,14 +152,16 @@ const parseVendorServer = async (
   }
   const allowed = transport.kind === "stdio" ? STDIO_FIELDS : HTTP_FIELDS;
   const unknown = unknownFields(entry, allowed);
-  const misplaced = unknown.filter((key) => !IGNORED_FIELDS.has(key));
+  const misplaced = unknown.filter((key) => !POLICY_FIELDS.has(key));
   if (misplaced.length > 0) {
     return fail(`unknown field "${misplaced[0]}" for ${transport.kind} server`);
   }
-  if (unknown.length > 0) {
-    warn(`ignoring host-specific fields: ${unknown.join(", ")}`);
+  const options = parseServerOptions(entry, transport.kind === "http");
+  if (!options.ok) {
+    return options;
   }
-  return transport.kind === "stdio" ? parseStdio(entry, ctx) : parseHttp(entry, ctx);
+  const parsed = transport.kind === "stdio" ? await parseStdio(entry, ctx) : parseHttp(entry, ctx);
+  return parsed.ok ? { ok: true, server: { ...parsed.server, ...options.options } } : parsed;
 };
 
 // Some files wrap servers in `mcpServers`, others are the bare server map.
@@ -245,8 +230,8 @@ const planSources = (sources: ServerSources, root: string, report: Report): Sour
       );
     } else {
       report({
-        message: `unsupported mcpServers entry ${JSON.stringify(value)}; MCP bundles aren't supported`,
-        severity: "warning",
+        message: `unsupported mcpServers entry ${JSON.stringify(value)}; .mcpb/.dxt archives require validated extraction and user configuration outside the loader; extract with a trusted bundle installer and declare a reviewed .json stdio definition`,
+        severity: "error",
         source: "plugin.json#mcpServers",
       });
     }
@@ -305,16 +290,17 @@ const discoverVendorServers = async (
       }),
     ),
   );
-  const servers: Record<string, PluginServer> = {};
+  const servers = new Map<string, PluginServer>();
   for (const [index, result] of results.entries()) {
     const { name = "", source = "" } = entries[index] ?? {};
     if (result.ok) {
-      servers[name] = result.server;
+      servers.set(name, result.server);
     } else {
+      servers.delete(name);
       report({ message: result.error, severity: "error", source });
     }
   }
-  return servers;
+  return Object.fromEntries(servers);
 };
 
 export type { ServerSources, VendorServerContext };

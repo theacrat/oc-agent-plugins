@@ -74,21 +74,40 @@ const alwaysRules = (plugin: AgentPlugin): string[] =>
         `<rule plugin="${plugin.manifest.name}" name="${rule.name}">\n${rule.content}\n</rule>`,
     );
 
-const toServerConfig = (server: PluginServer): Mcp.ServerConfig =>
-  server.type === "stdio"
+const toServerConfig = (server: PluginServer, policiesRegistered = false): Mcp.ServerConfig => {
+  const options = {
+    ...(server.disabled === undefined ? {} : { disabled: server.disabled }),
+    ...(server.toolPolicy !== undefined && !policiesRegistered ? { disabled: true } : {}),
+    ...(server.timeout === undefined ? {} : { timeout: server.timeout }),
+  };
+  return server.type === "stdio"
     ? {
+        ...options,
         command: [server.command, ...server.args],
         cwd: server.cwd,
         environment: server.env,
         type: "local",
       }
-    : { headers: server.headers, type: "remote", url: server.url };
+    : {
+        ...options,
+        headers: server.headers,
+        type: "remote",
+        url: server.url,
+        ...(server.oauth === undefined ? {} : { oauth: server.oauth }),
+      };
+};
 
-const toServerConfigs = (plugin: AgentPlugin): [string, Mcp.ServerConfig][] =>
+const serverConfigs = (
+  plugin: AgentPlugin,
+  policiesRegistered: boolean,
+): [string, Mcp.ServerConfig][] =>
   Object.entries(plugin.servers).map(([name, server]) => [
     serverName(plugin, name),
-    toServerConfig(server),
+    toServerConfig(server, policiesRegistered),
   ]);
+
+const toServerConfigs = (plugin: AgentPlugin) => serverConfigs(plugin, false);
+const toPolicyServerConfigs = (plugin: AgentPlugin) => serverConfigs(plugin, true);
 
 const toCommands = (plugin: AgentPlugin): { name: string; command: PluginCommand }[] =>
   plugin.commands.map((command) => ({ command, name: commandName(plugin, command.name) }));
@@ -191,5 +210,6 @@ export {
   skillID,
   toCommands,
   toServerConfigs,
+  toPolicyServerConfigs,
   toSkillInfo,
 };
