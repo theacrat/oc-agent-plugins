@@ -137,6 +137,7 @@ interface StreamableHttpServer extends ServerOptions {
 type PluginServer = StdioServer | StreamableHttpServer;
 
 interface AgentPlugin {
+  readonly disabled?: boolean;
   readonly hooks?: readonly PluginHook[];
   readonly styles?: readonly PluginOutputStyle[];
   readonly configuration?: ResolvedConfiguration;

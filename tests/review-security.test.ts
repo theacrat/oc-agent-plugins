@@ -202,6 +202,26 @@ describe("review security regressions", () => {
     ]);
   });
 
+  it("rejects post-tool failClosed through normal plugin loading", async () => {
+    const root = await makeTree({
+      ".cursor-plugin/plugin.json": JSON.stringify({ name: "post" }),
+      "hooks/hooks.json": JSON.stringify({
+        hooks: { afterShellExecution: [{ command: "exit 1", failClosed: true }] },
+        version: 1,
+      }),
+    });
+    const loaded = await loadAll([root], {
+      dataRoot: "/tmp/opencode/review-hook-data",
+      trustedHooks: ["post"],
+    });
+    expect(loaded.plugins[0]?.hooks).toEqual([]);
+    expect(
+      loaded.diagnostics.some((entry) =>
+        entry.message.includes("failClosed is only supported for before-tool hooks"),
+      ),
+    ).toBe(true);
+  });
+
   it.each(["PostToolUse", "PostToolUseFailure", "PreCompact"])(
     "rejects failClosed on the non-blocking %s phase",
     (event) => {

@@ -1,10 +1,17 @@
 import type { Plugin } from "@opencode/plugin";
 import { describe, expect, it, vi } from "vitest";
 
+import { loadAll } from "#src/loader.ts";
 import { parseOptions } from "#src/options.ts";
-import { setupCompatibilityLifecycle } from "#src/runtime/compatibility-lifecycle.ts";
+import type { MonitorRuntime } from "#src/runtime/compatibility-commands.ts";
+import {
+  setupCompatibilityLifecycle,
+  watchCompatibilitySessions,
+} from "#src/runtime/compatibility-lifecycle.ts";
 import { defaultStyle } from "#src/runtime/default-style.ts";
 import type { AgentPlugin, LoadResult } from "#src/types.ts";
+
+import { makeTree } from "./fixture.ts";
 
 const options = (raw: Readonly<Record<string, unknown>>) =>
   parseOptions({ dataHome: "/data", home: "/home", project: "/project", raw }, (entry) => {
@@ -60,6 +67,27 @@ describe("reviewed style lifecycle", () => {
         result("p"),
       ),
     ).toBeUndefined();
+  });
+
+  it.each([
+    { defaultEnabled: false, name: "disabled" },
+    { name: "disabled", policy: { installation: "NOT_AVAILABLE" } },
+  ])("excludes actual activation denials from default selection: %j", async (manifest) => {
+    const root = await makeTree({
+      ".claude-plugin/plugin.json": JSON.stringify(manifest),
+      "output-styles/concise.md": "---\nkeep-coding-instructions: true\n---\nConcise.",
+    });
+    const settings = options({
+      plugins: { disabled: { components: { styles: { selected: "concise" } } } },
+    });
+    const loaded = await loadAll([root], {
+      dataRoot: "/tmp/opencode/review-style-data",
+      pluginSettings: settings.pluginSettings,
+    });
+    expect(loaded.plugins[0]?.disabled).toBe(true);
+    expect(defaultStyle(settings, loaded)).toBeUndefined();
+    const global = options({ components: { styles: { selected: "disabled:concise" } } });
+    expect(defaultStyle(global, loaded)).toBeUndefined();
   });
 
   it("rejects competing active defaults during setup", async () => {
@@ -148,5 +176,61 @@ describe("reviewed style lifecycle", () => {
     expect(scoped.has("s")).toBe(false);
     expect(selection).toHaveBeenCalledTimes(2);
     await cleanup();
+  });
+
+  it("routes skill monitors by identity after inventory reordering", async () => {
+    const invoked: string[] = [];
+    const { promise: done, resolve: finish } = Promise.withResolvers<boolean>();
+    const ctx = {
+      event: {
+        async *subscribe() {
+          yield { data: { id: "second:skill", sessionID: "s" }, type: "session.skill.activated" };
+          await Promise.resolve();
+          finish(true);
+        },
+      },
+    };
+    const first: MonitorRuntime = {
+      active: () => 0,
+      dispose,
+      invokeSkill: () => {
+        invoked.push("first");
+      },
+      startSession: vi.fn<() => void>(),
+      stopSession: dispose,
+    };
+    const second: MonitorRuntime = {
+      active: () => 0,
+      dispose,
+      invokeSkill: () => {
+        invoked.push("second");
+      },
+      startSession: vi.fn<() => void>(),
+      stopSession: dispose,
+    };
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- minimal public event surface
+    const native = ctx as unknown as Plugin.Context;
+    const monitors = new Map<string, MonitorRuntime>([
+      ["first", first],
+      ["second", second],
+    ]);
+    const runtime = {
+      clearSession: vi.fn<() => void>(),
+      dispose,
+      replace: vi.fn<() => void>(),
+      select: vi.fn<() => void>(),
+    };
+    const stop = watchCompatibilitySessions(
+      native,
+      new Set(["s"]),
+      runtime,
+      runtime,
+      () => result("second", "first"),
+      () => monitors,
+      vi.fn<() => void>(),
+    );
+    await done;
+    stop();
+    expect(invoked).toEqual(["second"]);
   });
 });

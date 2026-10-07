@@ -7,6 +7,7 @@ import type { LoadResult } from "#src/types.ts";
 const defaultStyle = (options: Options, result: LoadResult): StyleSelection | undefined => {
   const active = result.plugins.filter(
     (plugin) =>
+      plugin.disabled !== true &&
       componentsForPlugin(options, plugin.manifest.name).has("styles") &&
       options.pluginSettings[plugin.manifest.name] !== false,
   );
@@ -34,7 +35,8 @@ const defaultStyle = (options: Options, result: LoadResult): StyleSelection | un
   // A disabled component does not activate a retained selection.
   if (
     !componentsForPlugin(options, plugin).has("styles") ||
-    options.pluginSettings[plugin] === false
+    options.pluginSettings[plugin] === false ||
+    result.plugins.some((entry) => entry.manifest.name === plugin && entry.disabled === true)
   ) {
     return undefined;
   }

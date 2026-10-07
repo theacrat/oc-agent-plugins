@@ -81,6 +81,7 @@ const loadVendorPlugin = async (
         agents: [],
         commands: [],
         dataDir: path.join(options.dataRoot, manifest.name),
+        disabled: true,
         format,
         manifest,
         root,
