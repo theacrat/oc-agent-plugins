@@ -18,27 +18,34 @@
     "type": "git",
     "url": "git+https://github.com/theacrat/oc-agent-plugins.git"
   },
+  "bin": {
+    "oc-agent-plugins": "./dist/cli.js"
+  },
   "files": [
     "src",
-    "index.ts"
+    "index.ts",
+    "dist"
   ],
   "type": "module",
   "imports": {
     "#src/*": "./src/*"
   },
   "exports": {
-    ".": "./index.ts"
+    ".": "./index.ts",
+    "./package.json": "./package.json"
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "bun scripts/build-cli.ts",
     "check": "bun run lint && bun run fmt:check && bun run test",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "inspect": "bun scripts/inspect.ts",
     "lint": "oxlint",
+    "prepack": "bun run build",
     "test": "vitest run"
   },
   "dependencies": {
@@ -56,5 +63,8 @@
     "oxlint-tsgolint": "7.0.2003",
     "typescript": "^7.0.2",
     "vitest": "5.0.3"
+  },
+  "engines": {
+    "node": ">=22.14.0"
   }
 }

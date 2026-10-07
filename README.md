@@ -4,6 +4,30 @@ An OpenCode v2 plugin that loads [Agent Plugins](https://agent-plugins.org/) 1.0
 
 ## Install
 
+### Manage vendor packages with npx
+
+The package includes the `oc-agent-plugins` CLI. It runs on Node without requiring Bun and installs vendor packages into the directories this adapter discovers.
+
+```sh
+npx oc-agent-plugins install cloudflare/skills
+npx oc-agent-plugins install ./my-plugin --global
+npx oc-agent-plugins install https://github.com/acme/plugins.git --ref main --subdir plugins/review
+npx oc-agent-plugins list
+npx oc-agent-plugins info cloudflare
+npx oc-agent-plugins update cloudflare
+npx oc-agent-plugins update --all
+npx oc-agent-plugins disable cloudflare
+npx oc-agent-plugins enable cloudflare
+npx oc-agent-plugins uninstall cloudflare
+npx oc-agent-plugins doctor
+```
+
+Project scope is the default, using the current directory's `.opencode/agent-plugins/`. Use `--project /path/to/project` for an explicit project or `--global` for OpenCode's global vendor directory. `OPENCODE_CONFIG_DIR` and the XDG/home fallback are respected. `--json` gives machine-readable results.
+
+Installations are copied snapshots with ownership receipts and content fingerprints. Updates refresh the recorded local source or Git ref. Edited or unmanaged packages are never overwritten; a plugin's persistent runtime data is retained on uninstall. Disable/enable keeps a managed package outside/inside discovery without changing OpenCode settings.
+
+The CLI does not start OpenCode, connect MCP servers, execute package scripts or grant hooks/monitor trust. You still need to load the OpenCode adapter separately and configure trust explicitly when needed. After changing installations, run `/agent-plugins` in OpenCode to rescan.
+
 Once published on npm, add `oc-agent-plugins` to OpenCode's `plugins` array. The public source is [theacrat/oc-agent-plugins](https://github.com/theacrat/oc-agent-plugins).
 
 For a local checkout, point `plugins` in `opencode.json(c)` at this directory. It has to be the directory, not `index.ts`, because OpenCode only accepts a directory as a local plugin path.

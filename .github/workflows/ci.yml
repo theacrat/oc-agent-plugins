@@ -26,3 +26,9 @@ jobs:
       - run: bun run check
         env:
           CLOUDFLARE_SKILLS: ${{ github.workspace }}/.fixtures/cloudflare-skills
+      - run: bun run build
+      - run: node dist/cli.js --help
+      - name: Exercise the packed CLI through npx
+        run: |
+          bun pm pack --filename package.tgz
+          npm exec --yes --package=./package.tgz -- oc-agent-plugins --version

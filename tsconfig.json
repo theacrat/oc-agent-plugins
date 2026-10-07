@@ -19,6 +19,7 @@
     "allowImportingTsExtensions": true,
     "module": "esnext",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "noUncheckedSideEffectImports": true,
 
     "allowUnreachableCode": false,

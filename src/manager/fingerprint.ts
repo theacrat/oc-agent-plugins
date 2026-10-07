@@ -1,5 +1,4 @@
 // The manager hashes snapshots with Node's standard SHA-256 implementation.
-// eslint-disable-next-line import/no-nodejs-modules
 import { createHash } from "node:crypto";
 
 import { directoryFiles } from "#src/manager/snapshot.ts";

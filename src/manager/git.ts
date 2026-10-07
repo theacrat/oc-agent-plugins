@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import pathModule from "node:path";
 // Node's callback subprocess API is adapted once at the execution boundary.
-// eslint-disable-next-line import/no-nodejs-modules
 import { promisify } from "node:util";
 
 import { forEachSequential } from "#src/manager/sequence.ts";

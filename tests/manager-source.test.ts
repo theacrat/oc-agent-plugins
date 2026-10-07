@@ -3,7 +3,6 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import pathModule from "node:path";
 import { pathToFileURL } from "node:url";
 // Adapt the Node subprocess boundary without a shell.
-// eslint-disable-next-line import/no-nodejs-modules
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
