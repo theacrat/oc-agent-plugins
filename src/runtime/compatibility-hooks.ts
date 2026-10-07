@@ -4,32 +4,60 @@ import type { Options } from "#src/options.ts";
 import { registerHooks } from "#src/runtime/hooks.ts";
 import type { LoadResult, Report } from "#src/types.ts";
 
+const configuredHook = (
+  plugin: LoadResult["plugins"][number],
+  hook: NonNullable<LoadResult["plugins"][number]["hooks"]>[number],
+) => {
+  const config = plugin.configuration;
+  if (config === undefined) {
+    return hook;
+  }
+  if (hook.args === undefined && hook.command.includes("${user_config.")) {
+    throw new Error(
+      "user_config references are forbidden in shell-form hooks; use exec args or CLAUDE_PLUGIN_OPTION environment variables",
+    );
+  }
+  return {
+    ...hook,
+    ...(hook.args === undefined
+      ? {}
+      : { args: hook.args.map((arg) => config.expand(arg)), command: config.expand(hook.command) }),
+  };
+};
+
 const registerConfiguredHooks = async (
   ctx: Plugin.Context,
   options: Options,
   current: () => LoadResult,
   report: Report,
 ) =>
-  registerHooks(ctx, () => current().plugins.flatMap((plugin) => plugin.hooks ?? []), {
-    enabled: (hook) =>
-      current().plugins.some(
-        (plugin) =>
-          plugin.root === hook.root && options.trustedHooks.includes(plugin.manifest.name),
+  registerHooks(
+    ctx,
+    () =>
+      current().plugins.flatMap((plugin) =>
+        (plugin.hooks ?? []).map((hook) => configuredHook(plugin, hook)),
       ),
-    env: (hook) => {
-      const plugin = current().plugins.find((entry) => entry.root === hook.root);
-      return plugin === undefined
-        ? {}
-        : {
-            CLAUDE_PLUGIN_DATA: plugin.dataDir,
-            CLAUDE_PLUGIN_ROOT: plugin.root,
-            CLAUDE_PROJECT_DIR: ctx.location.project.directory,
-            PLUGIN_DATA: plugin.dataDir,
-            PLUGIN_ROOT: plugin.root,
-            ...plugin.configuration?.hookEnvironment(),
-          };
+    {
+      enabled: (hook) =>
+        current().plugins.some(
+          (plugin) =>
+            plugin.root === hook.root && options.trustedHooks.includes(plugin.manifest.name),
+        ),
+      env: (hook) => {
+        const plugin = current().plugins.find((entry) => entry.root === hook.root);
+        return plugin === undefined
+          ? {}
+          : {
+              CLAUDE_PLUGIN_DATA: plugin.dataDir,
+              CLAUDE_PLUGIN_ROOT: plugin.root,
+              CLAUDE_PROJECT_DIR: ctx.location.project.directory,
+              PLUGIN_DATA: plugin.dataDir,
+              PLUGIN_ROOT: plugin.root,
+              ...plugin.configuration?.hookEnvironment(),
+            };
+      },
+      report,
     },
-    report,
-  });
+  );
 
 export { registerConfiguredHooks };

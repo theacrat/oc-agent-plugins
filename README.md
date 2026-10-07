@@ -27,14 +27,14 @@ If you don't need options, symlinking the directory into `~/.config/opencode/plu
 
 ## Options
 
-| Option           | Default                                 | Effect                                                                                                                                         |
-| ---------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `paths`          | `[]`                                    | Extra search paths. Relative paths resolve against the project, and `~` is your home directory.                                                |
-| `formats`        | all `true`                              | `{ "agent-plugins", "claude", "codex", "cursor" }`. Set one to `false` to stop loading that format.                                            |
-| `components`     | all `true`                              | `{ "skills", "mcp", "commands", "rules", "agents" }`. Set one to `false` to stop registering that component type.                              |
-| `vendorDirs`     | `false`                                 | Also load plugins already installed for other tools: `~/.claude/plugins/marketplaces`, `~/.codex/plugins/cache` and `~/.cursor/plugins/local`. |
-| `shellInjection` | `true`                                  | Run `` !`cmd` `` blocks in Claude commands when you invoke the command. With this off, they show up as text instead.                           |
-| `dataDir`        | `$XDG_DATA_HOME/opencode/agent-plugins` | Where each plugin's persistent data directory lives.                                                                                           |
+| Option           | Default                                 | Effect                                                                                                                                                  |
+| ---------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `paths`          | `[]`                                    | Extra search paths. Relative paths resolve against the project, and `~` is your home directory.                                                         |
+| `formats`        | all `true`                              | `{ "agent-plugins", "claude", "codex", "cursor" }`. Set one to `false` to stop loading that format.                                                     |
+| `components`     | all `true`                              | `{ "skills", "mcp", "commands", "rules", "agents", "hooks", "styles", "monitors", "lsp" }`. Set one to `false` to stop registering that component type. |
+| `vendorDirs`     | `false`                                 | Also load plugins already installed for other tools: `~/.claude/plugins/marketplaces`, `~/.codex/plugins/cache` and `~/.cursor/plugins/local`.          |
+| `shellInjection` | `true`                                  | Run `` !`cmd` `` blocks in Claude commands when you invoke the command. With this off, they show up as text instead.                                    |
+| `dataDir`        | `$XDG_DATA_HOME/opencode/agent-plugins` | Where each plugin's persistent data directory lives.                                                                                                    |
 
 Unknown or mistyped options are reported. They don't stop the plugin loading.
 
@@ -71,10 +71,10 @@ The plugin also adds `/agent-plugins`. It rescans everything, reloads it, and po
   - Commands follow Claude's argument rules: `$ARGUMENTS`, 0-based `$N` and `$ARGUMENTS[N]`, named `arguments`, and the trailing `ARGUMENTS:` fallback. They also run `` !`cmd` `` injection in the session directory. Injections only come from the command file itself. Anything in the text you type after the command is never run.
   - A Claude plugin with no manifest still loads when a marketplace lists it. Codex and Cursor plugins need their manifest.
   - `disable-model-invocation` hides a skill from the model, but you can still load it by ID.
-- **Codex**: reads `.codex-plugin/plugin.json`, `skills/` plus any declared `skills`, `.mcp.json` and declared `mcpServers`. `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded, along with their `CLAUDE_` aliases. Several behavioural fields, including `enabled`, `oauth` and tool-policy settings, are currently ignored with a warning. These are compatibility gaps, not harmless metadata; see the audit before importing vendor MCP configurations.
+- **Codex**: reads `.codex-plugin/plugin.json`, `skills/` plus any declared `skills`, `.mcp.json` and declared `mcpServers`. `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded, along with their `CLAUDE_` aliases. Enablement, OAuth, timeouts and tool availability/approval policies are preserved. Settings native V2 cannot preserve reject that server instead of weakening its policy.
 - **Cursor**: reads `.cursor-plugin/plugin.json`, `skills/`, `rules/`, `commands/` and `mcp.json`. A declared path replaces the default location. A root `SKILL.md` counts as a single-skill plugin. `${CURSOR_PLUGIN_ROOT}` is expanded. Commands use OpenCode's own argument rules.
 
-Hooks, LSP servers, apps, output styles, `userConfig` and Cursor `variables` are not implemented by this adapter. This does not mean OpenCode lacks the underlying capabilities. See [the compatibility audit](docs/compatibility-audit.md) for the distinction and the remaining behavioural gaps. SSE, WebSocket and MCP bundle (`.mcpb`) servers are skipped with a warning.
+See [the compatibility audit](docs/compatibility-audit.md) for native support, opt-in bridges and actual API blockers. Unsupported security-sensitive server settings reject the server; they are never silently ignored.
 
 ## Diagnostics
 
@@ -111,3 +111,37 @@ Source files import each other through the `#src/*` subpath import in `package.j
 Claude and Cursor `agents/` files (or declared `agents` paths) become OpenCode subagents named `<plugin>:<agent>`. Their prompts, descriptions, colours, step limits and tool restrictions are mapped. Restricted tools are never widened to unrestricted grants. Claude model aliases such as `sonnet` and `opus` inherit the session model and produce a warning; explicit `provider/model` values are retained. Set `components: { agents: false }` to disable agent registration.
 
 `vendorDirs` only controls where this loader searches. For example, with it off, a Claude plugin in `~/.claude/plugins/marketplaces` is not searched automatically, but it still loads if you include that directory in `paths`. It never starts Claude, Codex or Cursor.
+
+## Extended compatibility
+
+These options are adapter-owned. No credential stores or trust decisions are imported from other applications.
+
+```jsonc
+{
+  "trustedHooks": ["my-plugin"],
+  "trustedMonitors": ["my-plugin"],
+  "pluginSettings": { "my-plugin": true, "unwanted-plugin": false },
+  "configuration": {
+    "my-plugin": {
+      "userConfig": { "tenant": "public", "api_token": { "env": "PLUGIN_API_TOKEN" } },
+      "variables": { "API_TOKEN": { "env": "PLUGIN_API_TOKEN" } },
+      "modelAliases": { "sonnet": "anthropic/claude-sonnet-4-5" },
+    },
+  },
+  "outputStyle": "my-plugin:concise",
+  "appEndpoints": {
+    "asdk_app_example": { "url": "https://example.com/mcp" },
+  },
+}
+```
+
+- **Configuration:** Claude `userConfig` and Cursor variable declarations are validated, including required fields/defaults. Sensitive values must use environment references. Cursor variables default to sensitive; only names in `publicVariables` may enter model bodies. Secrets are rejected in prompt bodies, rules, descriptions and runtime exports.
+- **Hooks:** supported command/exec tool hooks translate vendor inputs, matchers and outputs. Explicit `trustedHooks` opt-in is required. Events or decisions without an equivalent contract are reported precisely; failed pre-tool translation blocks execution. This is a tested subset, not complete vendor hook parity.
+- **Styles:** `/agent-plugins-style plugin:name` selects a style for that session; `clear` removes the selection. Forced plugin styles take precedence. Styles that discard coding instructions require explicit `allowSystemReplacement: true`, because V2 cannot isolate that part of the assembled system prompt.
+- **Rules:** matching file-tool calls activate Cursor glob-scoped rules for subsequent requests in that session. Arbitrary shell file access is not tracked.
+- **Monitors:** `/agent-plugins-monitors start` explicitly starts trusted monitors; `stop` terminates them. Process ownership, output limits, aborts, session deletion and reload/unload cleanup are enforced. POSIX only; Windows process-group termination is not implemented.
+- **LSP:** `/agent-plugins-lsp` produces a validated project-config fragment. It never writes configuration. Unsupported LSP operational fields are rejected rather than lost.
+- **Apps:** `.app.json` IDs resolve only through explicit `appEndpoints` mappings. Those endpoints receive normal MCP validation/policies. No OpenAI app endpoint or credential is inferred.
+- **Export-only runtimes:** `/agent-plugins-export` shows workflows, themes and channel declarations with bridge requirements. Workflow scripts are never evaluated in the server. There is no safe Claude-isolated workflow runtime, native vendor theme importer or Claude channel notification/routing API in this adapter.
+
+`enabled: false` and `disabled: true` MCP servers stay disabled. Exact tool allowlists and denylists filter the catalog and are rechecked at execution; `prompt` approval requests permission without overriding configured denies. OAuth `false` and validated native-compatible settings are retained. Timeout seconds are converted to native milliseconds. An environment whitelist (`env_vars`), dynamic header helper, unsupported OAuth resource/policy, SSE/WebSocket transport or bundle archive rejects that entry with remediation. It is not substituted with a less restrictive connection.
