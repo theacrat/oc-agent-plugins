@@ -51,7 +51,7 @@ The search paths are `~/.agents/plugins`, `$OPENCODE_CONFIG_DIR/agent-plugins` (
 
 ### Global vendor packages
 
-Put portable, Claude, Codex or Cursor packages in `~/.config/opencode/agent-plugins/` to make them available across projects. `OPENCODE_CONFIG_DIR` takes precedence and names the OpenCode directory itself, so use `$OPENCODE_CONFIG_DIR/agent-plugins/` when set. Otherwise `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/opencode/agent-plugins/`, with the normal user config path as the fallback.
+Put portable, Claude, Codex or Cursor packages in `~/.config/opencode/agent-plugins/` to make them available across projects. `OPENCODE_CONFIG_DIR` takes precedence and names the OpenCode directory itself, so use `$OPENCODE_CONFIG_DIR/agent-plugins/` when set. Otherwise `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/opencode/agent-plugins/`, with the normal user config path as the fallback. Empty environment overrides are treated as unset, matching native OpenCode.
 
 ```sh
 git clone https://github.com/cloudflare/skills ~/.config/opencode/agent-plugins/cloudflare

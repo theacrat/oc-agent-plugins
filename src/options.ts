@@ -43,9 +43,12 @@ interface OptionsInput {
 const expandHome = (value: string, home: string) => value.replace(/^~(?=\/|$)/u, home);
 
 // OPENCODE_CONFIG_DIR is the config directory itself; XDG_CONFIG_HOME is its parent.
+// Empty environment overrides are unset in native OpenCode.
+const nonemptyOverride = (value: string | undefined) => (value === "" ? undefined : value);
+
 const configDirectory = (home: string, env: Readonly<Record<string, string | undefined>>): string =>
-  env["OPENCODE_CONFIG_DIR"] ??
-  path.join(env["XDG_CONFIG_HOME"] ?? path.join(home, ".config"), "opencode");
+  nonemptyOverride(env["OPENCODE_CONFIG_DIR"]) ??
+  path.join(nonemptyOverride(env["XDG_CONFIG_HOME"]) ?? path.join(home, ".config"), "opencode");
 
 const parseOptions = (input: OptionsInput, report: Report): Options => {
   const { home, project } = input;
