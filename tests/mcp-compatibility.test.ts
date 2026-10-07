@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import path from "node:path";
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { toPolicyServerConfigs, toServerConfigs } from "#src/opencode.ts";
 import { mcpPolicies, mcpToolEffect, restrictMcpPermission } from "#src/runtime/mcp-policy.ts";
@@ -6,15 +8,14 @@ import type { AgentPlugin } from "#src/types.ts";
 import { discoverVendorServers, parseVendorServer } from "#src/vendor/mcp.ts";
 import { placeholdersFor } from "#src/vendor/placeholders.ts";
 
-const ctx = {
-  dataDir: "/tmp/opencode/mcp-test-data",
-  placeholders: placeholdersFor("cursor", {
-    dataDir: "/tmp/opencode/mcp-test-data",
-    env: {},
-    root: "/tmp/opencode",
-  }),
-  root: "/tmp/opencode",
-};
+import { makeTree } from "./fixture.ts";
+
+let ctx: Parameters<typeof parseVendorServer>[1];
+beforeEach(async () => {
+  const root = await makeTree({});
+  const dataDir = path.join(root, "data");
+  ctx = { dataDir, placeholders: placeholdersFor("cursor", { dataDir, env: {}, root }), root };
+});
 const warn = vi.fn<(message: string) => void>();
 const parse = async (entry: unknown) => parseVendorServer(entry, ctx, warn);
 const plugin = (servers: AgentPlugin["servers"]): AgentPlugin => ({
@@ -40,9 +41,9 @@ describe("MCP compatibility", () => {
         "demo-local",
         {
           command: ["node"],
-          cwd: "/tmp/opencode",
+          cwd: ctx.root,
           disabled: true,
-          environment: { CLAUDE_PLUGIN_ROOT: "/tmp/opencode", CURSOR_PLUGIN_ROOT: "/tmp/opencode" },
+          environment: { CLAUDE_PLUGIN_ROOT: ctx.root, CURSOR_PLUGIN_ROOT: ctx.root },
           timeout: { startup: 10 },
           type: "local",
         },

@@ -16,9 +16,17 @@ Installed packages are copied snapshots, not live symlinks or mutable Git worktr
 
 Installation validates the manifest only, so missing credentials or unavailable MCP services do not prevent package management. No subprocess from a plugin is launched. Package files must remain inside the resolved source root. `.git` and `node_modules` are excluded. Links are either safely materialised from inside the root or rejected; special files and escaping links are rejected.
 
+Secure payload reads require Linux descriptor-path verification through `/proc/self/fd`. Other platforms fail closed instead of using canonical-path/inode checks that cannot guarantee containment against adversarial parent-directory swaps. Help and version remain available on those platforms. Cross-platform secure payload reads require a future descriptor-relative filesystem bridge.
+
 Mutations acquire a target-directory lock, stage on the same filesystem, validate and fingerprint before an atomic rename, and roll back replacements on errors. Receipts are committed with the package. Updates preserve plugin identity and reject local edits rather than discarding user work. Interrupted operation metadata must be detected and handled safely. Disable/enable moves managed snapshots into/out of a sibling hidden storage directory; uninstall removes only a verified managed snapshot and retains persistent runtime data.
 
+Normal validation failures clean up the newly owned staging directory and leave the prior installation unchanged. Incomplete stages remain private manager scratch space and are removed on ordinary acquisition or validation errors. Cleanup preserves replaced stage directories and detects edits to validated, fingerprinted stages before deleting them. Journals and backups from interrupted mutations remain available for manual recovery.
+
 Commands are `install`, `update <name>|--all`, `list`, `info`, `enable`, `disable`, `uninstall` (alias `remove`), `doctor`, `help` and `version`. `--json` gives machine-readable output. Missing packages, invalid arguments, conflicts and unsafe paths fail with nonzero exit codes and actionable messages. Enabling an installation does not grant hooks/monitor trust.
+
+OpenCode exposes the same operations through `/agent-plugins-manage`. Its native command executor calls the shared manager directly, using the invoking session's location as the default project and relative-source base. Quoted arguments are tokenised without shell execution or interpolation. Results and errors are synthetic messages with model continuation disabled. Mutations do not implicitly reload vendor runtime components; `/agent-plugins` remains the explicit rescan command.
+
+Temporary directories use the operating system's temporary-directory resolver and unique owned directories rather than hard-coded global `/tmp` paths. Git isolation uses the platform's null device. Portable scratch paths do not relax the secure payload-read platform requirement.
 
 ## Packaging and verification
 

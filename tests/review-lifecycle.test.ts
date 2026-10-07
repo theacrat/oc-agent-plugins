@@ -81,7 +81,7 @@ describe("reviewed style lifecycle", () => {
       plugins: { disabled: { components: { styles: { selected: "concise" } } } },
     });
     const loaded = await loadAll([root], {
-      dataRoot: "/tmp/opencode/review-style-data",
+      dataRoot: await makeTree({}),
       pluginSettings: settings.pluginSettings,
     });
     expect(loaded.plugins[0]?.disabled).toBe(true);

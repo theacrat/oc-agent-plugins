@@ -1,6 +1,8 @@
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+import { afterEach } from "vitest";
 
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 // oxlint-disable-next-line no-template-curly-in-string -- literal Agent Plugins placeholder
@@ -13,8 +15,21 @@ const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 
 type Tree = Record<string, string | { symlink: string }>;
 
+const makeTempDir = async (prefix = "agent-plugins-"): Promise<string> => {
+  const base = await mkdtemp(path.join(tmpdir(), prefix));
+  return realpath(base);
+};
+
+const trees: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    trees.splice(0).map(async (base) => rm(base, { force: true, recursive: true })),
+  );
+});
+
 const makeTree = async (tree: Tree) => {
-  const base = await mkdtemp(path.join(tmpdir(), "agent-plugins-"));
+  const base = await makeTempDir();
+  trees.push(base);
   await Promise.all(
     Object.entries(tree).map(async ([file, content]) => {
       const full = path.join(base, file);
@@ -37,4 +52,15 @@ const mcp = (servers: Record<string, unknown>, extra: Record<string, unknown> = 
   JSON.stringify({ $schema: MCP_SCHEMA, mcpServers: servers, ...extra });
 
 export type { Tree };
-export { PLUGIN_SCHEMA, ROOT, DATA, HOME_PLACEHOLDER, MCP_SCHEMA, makeTree, skill, manifest, mcp };
+export {
+  PLUGIN_SCHEMA,
+  ROOT,
+  DATA,
+  HOME_PLACEHOLDER,
+  MCP_SCHEMA,
+  makeTempDir,
+  makeTree,
+  skill,
+  manifest,
+  mcp,
+};

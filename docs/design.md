@@ -12,7 +12,7 @@ Agent Plugins 1.0.0 defines a portable directory format with two component types
 
 **Namespacing.** Skills become `<plugin>:<skill>` and servers become `<plugin>-<server>`. That stops two plugins with a skill or server of the same name from overwriting each other, and keeps the origin visible in the UI. Plugin names are unique within a load, and the first one found wins.
 
-**Search paths.** `~/.agents/plugins` and `<project>/.agents/plugins` follow the vendor-neutral `.agents/` convention the spec uses in its own examples. The `paths` option covers anything else. Installation, updates and marketplaces are client policy under the spec and are out of scope here.
+**Search paths.** `~/.agents/plugins` and `<project>/.agents/plugins` follow the vendor-neutral `.agents/` convention the spec uses in its own examples. The `paths` option covers anything else. Installation and updates are client policy implemented separately by the CLI in [ADR 0004](adr/0004-plugin-manager-cli.md); marketplaces remain out of scope.
 
 **SSE is skipped.** The spec makes legacy HTTP+SSE optional, and OpenCode's remote config doesn't let a client pin the initial transport to SSE. Skipping and reporting is conformant. Mapping SSE to `remote` isn't, because the initial attempt would use the wrong transport.
 

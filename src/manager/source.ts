@@ -2,8 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import { acquireGitSource } from "#src/manager/git.ts";
-import { EXCLUDED, safeRelativePath } from "#src/manager/snapshot.ts";
-import { RECEIPT } from "#src/manager/types.ts";
+import { validateGitSource } from "#src/manager/source-policy.ts";
 import type { AcquiredSource, Source } from "#src/manager/types.ts";
 
 interface SourceOptions {
@@ -12,73 +11,29 @@ interface SourceOptions {
   readonly subdir?: string;
 }
 
-const validateRef = (ref: string): void => {
-  if (
-    !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(ref) ||
-    ref.includes("..") ||
-    ref.includes("//") ||
-    ref.endsWith("/") ||
-    ref.endsWith(".")
-  ) {
-    throw new Error(`Unsafe Git ref: ${ref}`);
-  }
-};
-
-const validateGitSource = (source: Extract<Source, { kind: "git" }>): void => {
-  const { url, ref, subdir } = source;
-  if (ref !== undefined) {
-    validateRef(ref);
-  }
-  if (
-    subdir !== undefined &&
-    (!safeRelativePath(subdir) ||
-      subdir.startsWith("/") ||
-      subdir.split("/").some((part) => EXCLUDED.has(part) || part === RECEIPT))
-  ) {
-    throw new Error(`Subdirectory must be a contained relative path: ${subdir}`);
-  }
-  if (/^git@[A-Za-z0-9.-]+:[A-Za-z0-9_./-]+$/u.test(url)) {
-    return;
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("Unsupported Git URL");
-  }
-  if (
-    !["https:", "ssh:", "file:"].includes(parsed.protocol) ||
-    parsed.username !== "" ||
-    parsed.password !== "" ||
-    parsed.search !== "" ||
-    parsed.hash !== "" ||
-    /[\s\0\\]/u.test(url)
-  ) {
-    throw new Error("Unsafe Git URL");
-  }
-  if (parsed.protocol === "file:" && parsed.hostname !== "" && parsed.hostname !== "localhost") {
-    throw new Error("File Git URLs must refer to the local host");
-  }
-};
+const looksRemote = (input: string): boolean =>
+  /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(input) || input.startsWith("git@");
 
 const parseSource = async (input: string, options: SourceOptions): Promise<Source> => {
   if (input.length === 0 || input.includes("\0")) {
     throw new Error("Source must not be empty or contain NUL");
   }
   const local = path.resolve(options.cwd, input);
-  try {
-    const directory = await realpath(local);
-    const stat = await lstat(directory);
-    if (!stat.isDirectory()) {
-      throw new Error("Local source must be a directory");
-    }
-    if (options.ref !== undefined || options.subdir !== undefined) {
-      throw new Error("--ref and --subdir require a Git source");
-    }
-    return { kind: "local", path: directory };
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-      throw error;
+  if (!looksRemote(input)) {
+    try {
+      const directory = await realpath(local);
+      const stat = await lstat(directory);
+      if (!stat.isDirectory()) {
+        throw new Error("Local source must be a directory");
+      }
+      if (options.ref !== undefined || options.subdir !== undefined) {
+        throw new Error("--ref and --subdir require a Git source");
+      }
+      return { kind: "local", path: directory };
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
     }
   }
   const separator = input.indexOf("#");
@@ -98,15 +53,12 @@ const parseSource = async (input: string, options: SourceOptions): Promise<Sourc
     ...(options.subdir === undefined ? {} : { subdir: options.subdir }),
   };
   validateGitSource(source);
-  if (url.startsWith("file:")) {
-    throw new Error("Public Git sources require HTTPS or SSH transport");
-  }
   return source;
 };
 
 const acquireSource = async (source: Source, scratchParent: string): Promise<AcquiredSource> => {
   if (source.kind === "git") {
-    validateGitSource(source);
+    validateGitSource(source, true);
     return acquireGitSource(source, scratchParent);
   }
   const directory = await realpath(source.path);

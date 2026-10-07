@@ -211,7 +211,7 @@ describe("review security regressions", () => {
       }),
     });
     const loaded = await loadAll([root], {
-      dataRoot: "/tmp/opencode/review-hook-data",
+      dataRoot: await makeTree({}),
       trustedHooks: ["post"],
     });
     expect(loaded.plugins[0]?.hooks).toEqual([]);

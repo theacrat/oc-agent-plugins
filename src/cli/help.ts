@@ -23,7 +23,8 @@ Options:
   --version, -v       Show this CLI's version
 
 Requirements:
-  Node >=22.14.0; Git is required only for remote repository sources.
+  Linux with /proc/self/fd and Node >=22.14.0 for package management.
+  Git is required only for remote repository sources.
 
 Examples:
   npx oc-agent-plugins install cloudflare/skills

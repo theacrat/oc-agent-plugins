@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, writeFile, symlink, rm } from "node:fs/promises";
+import { mkdir, writeFile, symlink, rm } from "node:fs/promises";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runHookProcess } from "#src/runtime/hook-process.ts";
 import {
@@ -17,9 +17,11 @@ import type { Diagnostic } from "#src/types.ts";
 import { hookMatcher, loadHooks, parseHooks } from "#src/vendor/hooks.ts";
 import type { PluginHook } from "#src/vendor/hooks.ts";
 
+import { makeTempDir } from "./fixture.ts";
+
 const roots: string[] = [];
 const fixture = async () => {
-  const root = await mkdtemp("/tmp/opencode/hooks-test-");
+  const root = await makeTempDir("hooks-test-");
   roots.push(root);
   return root;
 };
@@ -28,17 +30,20 @@ afterEach(async () => {
     roots.splice(0).map(async (root) => rm(root, { force: true, recursive: true })),
   );
 });
-const hook: PluginHook = {
+let hook: PluginHook = {
   args: [],
   command: "cat",
   event: "PreToolUse",
   failClosed: false,
   format: "claude",
   phase: "before",
-  root: "/tmp/opencode",
+  root: "",
   source: "test",
   timeout: 1000,
 };
+beforeEach(async () => {
+  hook = { ...hook, root: await fixture() };
+});
 
 describe("vendor hooks", () => {
   it("parses disabled command hooks but emits opt-in diagnostics and exact blockers", () => {
@@ -178,7 +183,7 @@ describe("hook decisions and processes", () => {
     };
     // Generic hook overloads are erased only in this test mock; production is checked against 2.0.24.
     const mock = {
-      location: { directory: "/tmp/opencode" },
+      location: { directory: hook.root },
       session: { hook: register },
       tool: { hook: register },
     };

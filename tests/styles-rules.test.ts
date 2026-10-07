@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { Plugin } from "@opencode/plugin";
@@ -9,6 +9,8 @@ import { registerOutputStyles } from "#src/runtime/styles.ts";
 import type { PluginRule } from "#src/types.ts";
 import { loadOutputStyles } from "#src/vendor/output-styles.ts";
 import type { PluginOutputStyle } from "#src/vendor/output-styles.ts";
+
+import { makeTempDir } from "./fixture.ts";
 
 interface ContextEvent {
   sessionID: string;
@@ -118,7 +120,7 @@ describe("output styles", () => {
     await runtime.dispose();
   });
   it("discovers default and replacing custom directories, parses flags, and expands bodies", async () => {
-    const root = await mkdtemp("/tmp/opencode/ap-styles-");
+    const root = await makeTempDir("ap-styles-");
     try {
       await mkdir(path.join(root, "output-styles"));
       await mkdir(path.join(root, "custom"));

@@ -26,13 +26,28 @@ Project scope is the default, using the current directory's `.opencode/agent-plu
 
 Successful JSON results are written to stdout. Failures write a JSON error object to stderr and exit with status 1. `update --all` runs serially and stops on the first failure; earlier successful updates are retained.
 
+`help --json` returns an object with `command` and `help` fields. `version --json` returns a `version` field.
+
 Installations are copied snapshots with ownership receipts and content fingerprints. Updates refresh the recorded local source or Git ref. Edited or unmanaged packages are never overwritten; a plugin's persistent runtime data is retained on uninstall. Disable/enable keeps a managed package outside/inside discovery without changing OpenCode settings.
 
 The CLI does not start OpenCode, connect MCP servers, execute package scripts or grant hooks/monitor trust. You still need to load the OpenCode adapter separately and configure trust explicitly when needed. After changing installations, run `/agent-plugins` in OpenCode to rescan.
 
-Node 22.14 or newer is required. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs are supported; archives, npm packages and submodules are not installation sources.
+When the adapter is loaded, run the same management commands directly in OpenCode:
 
-Source symlinks and special files are rejected. On Linux, reads also verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against an adversarial process repeatedly swapping parent directories on other platforms; do not install or update local folders that an untrusted process can concurrently modify.
+```text
+/agent-plugins-manage install cloudflare/skills
+/agent-plugins-manage install "./my plugin" --global
+/agent-plugins-manage list
+/agent-plugins-manage update --all
+/agent-plugins-manage disable cloudflare
+/agent-plugins-manage doctor
+```
+
+The native command defaults to the invoking session's directory and accepts the CLI's options. It calls the manager directly without spawning `npx`, evaluating shell expressions or asking the model to perform the operation. Results do not resume the model. Run `/agent-plugins` separately to rescan after mutations.
+
+Package-management commands require Linux with `/proc/self/fd` available and Node 22.14 or newer. Help and version run on other platforms. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs (including `ssh://git@host/repository.git`) are supported; archives, npm packages and submodules are not installation sources.
+
+Source symlinks and special files are rejected. Reads verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against adversarial parent-directory swaps on other platforms, so secure file reads fail closed there rather than use a weaker fallback.
 
 An interrupted mutation fails closed. `doctor` reports the adjacent `.agent-plugins-manager` state directory; the CLI does not automatically break locks or delete journals/backups. Before manual recovery, stop concurrent CLI commands, preserve that directory and inspect the journal's source, target and backup paths. Do not delete a lock just because it looks old. Disabled snapshots live in the adjacent `.agent-plugins-disabled` directory.
 

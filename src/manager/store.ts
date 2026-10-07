@@ -1,4 +1,5 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { lstat, mkdtemp, open, readdir, rm } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 import { withLock } from "./lock.ts";
@@ -13,7 +14,6 @@ import {
 } from "./paths.ts";
 import { assertUpdateReceipt, readReceipt, writeReceipt } from "./receipt.ts";
 import { transact } from "./transaction.ts";
-import type { Boundary } from "./transaction.ts";
 import { RECEIPT } from "./types.ts";
 import type { AcquiredSource, Installation, PluginMetadata, Receipt } from "./types.ts";
 
@@ -24,7 +24,22 @@ interface StoreDependencies {
   readonly snapshotDirectory: (source: string, destination: string) => Promise<void>;
   // Fingerprints must exclude RECEIPT and include all remaining snapshot files.
   readonly fingerprintDirectory: (directory: string) => Promise<string>;
-  readonly boundary?: (boundary: Boundary) => Promise<void>;
+  readonly boundary?: Parameters<typeof transact>[0]["boundary"];
+}
+
+async function assessSnapshot(directory: string, deps: StoreDependencies) {
+  const receipt = await readReceipt(directory);
+  const resolved = await deps.readMetadata(directory);
+  if (
+    resolved?.manifest.name !== receipt.name ||
+    resolved.format !== receipt.format ||
+    resolved.manifest.version !== receipt.version
+  ) {
+    throw new Error("Receipt and manifest identity do not match");
+  }
+  await validateTree(directory);
+  const edited = (await deps.fingerprintDirectory(directory)) !== receipt.fingerprint;
+  return { edited, metadata: resolved, receipt };
 }
 
 async function inspect(
@@ -32,53 +47,34 @@ async function inspect(
   enabled: boolean,
   deps: StoreDependencies,
 ): Promise<Installation> {
-  const name = basename(directory);
+  const installation = { directory, enabled, name: basename(directory) };
   try {
     await safeDirectory(directory);
-    const metadata = await deps.readMetadata(directory);
     if (!(await exists(join(directory, RECEIPT)))) {
-      return { directory, enabled, managed: false, name, ...(metadata ? { metadata } : {}) };
+      const metadata = await deps.readMetadata(directory);
+      return { ...installation, managed: false, ...(metadata ? { metadata } : {}) };
     }
-    const receipt = await readReceipt(directory);
-    if (
-      receipt.name !== name ||
-      metadata?.manifest.name !== name ||
-      metadata.format !== receipt.format ||
-      metadata.manifest.version !== receipt.version
-    ) {
+    const { edited, ...snapshot } = await assessSnapshot(directory, deps);
+    if (snapshot.receipt.name !== installation.name) {
       throw new Error("Receipt and manifest identity do not match");
     }
-    await validateTree(directory);
-    const edited = (await deps.fingerprintDirectory(directory)) !== receipt.fingerprint;
     return {
-      directory,
-      enabled,
+      ...installation,
+      ...snapshot,
       managed: true,
-      metadata,
-      name,
-      receipt,
       ...(edited ? { problem: "Installation payload has local edits" } : {}),
     };
   } catch (error) {
-    return {
-      directory,
-      enabled,
-      managed: false,
-      name,
-      problem: error instanceof Error ? error.message : String(error),
-    };
+    const problem = error instanceof Error ? error.message : String(error);
+    return { ...installation, managed: false, problem };
   }
 }
 
 async function listInstallations(root: string, deps: StoreDependencies): Promise<Installation[]> {
-  const paths = storePaths(root);
+  const roots = storePaths(root);
+  const locations = [roots.active, roots.disabled];
   const groups = await Promise.all(
-    (
-      [
-        [paths.active, true],
-        [paths.disabled, false],
-      ] as const
-    ).map(async ([directory, enabled]) => {
+    locations.map(async (directory) => {
       if (!(await exists(directory))) {
         return [];
       }
@@ -87,49 +83,35 @@ async function listInstallations(root: string, deps: StoreDependencies): Promise
       return Promise.all(
         entries
           .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-          .map(async (entry) => inspect(join(directory, entry.name), enabled, deps)),
+          .map(async (entry) =>
+            inspect(join(directory, entry.name), directory === roots.active, deps),
+          ),
       );
     }),
   );
-  const result = [...groups.flat(), ...(await stateInventory(paths.state))];
+  const result = [...groups.flat(), ...(await stateInventory(roots.state))];
   return result.toSorted((left, right) => left.name.localeCompare(right.name));
-}
-
-async function owned(directory: string, deps: StoreDependencies): Promise<Installation> {
-  const installation = await inspect(directory, true, deps);
-  if (!installation.managed || installation.problem) {
-    throw new Error(
-      `Refusing to modify ${directory}: ${installation.problem ?? "unmanaged installation"}`,
-    );
-  }
-  return installation;
 }
 
 async function find(root: string, name: string, deps: StoreDependencies): Promise<Installation> {
   validateName(name);
   const inventory = await listInstallations(root, deps);
   const entries = inventory.filter((entry) => entry.name === name);
-  if (entries.length !== 1) {
+  const [entry] = entries;
+  if (entries.length !== 1 || !entry) {
     throw new Error(`Missing or conflicting installation: ${name}`);
   }
-  const [entry] = entries;
-  if (!entry) {
-    throw new Error(`Missing installation: ${name}`);
+  if (!entry.managed || entry.problem) {
+    throw new Error(
+      `Refusing to modify ${entry.directory}: ${entry.problem ?? "unmanaged installation"}`,
+    );
   }
-  await owned(entry.directory, deps);
   return entry;
 }
 
 async function verifySnapshot(directory: string, deps: StoreDependencies): Promise<void> {
-  await validateTree(directory);
-  const receipt = await readReceipt(directory);
-  const metadata = await deps.readMetadata(directory);
-  if (
-    metadata?.manifest.name !== receipt.name ||
-    metadata.format !== receipt.format ||
-    metadata.manifest.version !== receipt.version ||
-    (await deps.fingerprintDirectory(directory)) !== receipt.fingerprint
-  ) {
+  const { edited } = await assessSnapshot(directory, deps);
+  if (edited) {
     throw new Error(`Unowned or edited snapshot: ${directory}`);
   }
 }
@@ -139,16 +121,21 @@ async function destroy(directory: string, deps: StoreDependencies): Promise<void
   await rm(directory, { recursive: true });
 }
 
-async function stageSource(
-  root: string,
+function transactionOptions(root: string, deps: StoreDependencies) {
+  return {
+    boundary: deps.boundary,
+    destroy: async (directory: string) => destroy(directory, deps),
+    state: storePaths(root).state,
+    verify: async (directory: string) => verifySnapshot(directory, deps),
+  };
+}
+
+async function stagedReceipt(
+  stage: string,
   acquired: AcquiredSource,
   deps: StoreDependencies,
   previous?: Receipt,
-): Promise<{ stage: string; receipt: Receipt }> {
-  const paths = storePaths(root);
-  await validateSource(acquired.directory, [paths.active, paths.disabled, paths.state]);
-  const stage = await mkdtemp(join(paths.state, "stage-"));
-  await deps.snapshotDirectory(acquired.directory, stage);
+) {
   await validateTree(stage);
   if (await exists(join(stage, RECEIPT))) {
     throw new Error("Source contains a manager receipt; refusing adoption");
@@ -158,10 +145,8 @@ async function stageSource(
     throw new Error("Source has no supported plugin manifest");
   }
   validateName(metadata.manifest.name);
-  if (
-    previous &&
-    (previous.name !== metadata.manifest.name || previous.format !== metadata.format)
-  ) {
+  const identity = previous ?? { format: metadata.format, name: metadata.manifest.name };
+  if (identity.name !== metadata.manifest.name || identity.format !== metadata.format) {
     throw new Error("Update cannot change plugin name or format");
   }
   const receipt: Receipt = {
@@ -174,39 +159,82 @@ async function stageSource(
     ...(metadata.manifest.version === undefined ? {} : { version: metadata.manifest.version }),
   };
   await writeReceipt(stage, receipt);
-  try {
-    await deps.boundary?.("staged");
-  } catch (error) {
-    await destroy(stage, deps);
-    throw error;
-  }
-  return { receipt, stage };
+  return receipt;
 }
 
-async function install(
+async function checkStage(stage: string, handle: FileHandle): Promise<void> {
+  await safeDirectory(path.dirname(stage));
+  const original = await handle.stat();
+  const current = await lstat(stage);
+  const sameIdentity = current.dev === original.dev && current.ino === original.ino;
+  if (!current.isDirectory() || !sameIdentity) {
+    throw new Error(`Staging directory replaced; retained for inspection: ${stage}`);
+  }
+}
+
+async function cleanupStage(stage: string, handle: FileHandle): Promise<void> {
+  if (!(await exists(stage))) {
+    return;
+  }
+  await checkStage(stage, handle);
+  // Only this exact mkdtemp directory is owned. rm unlinks nested symlinks, never their targets.
+  await rm(stage, { recursive: true });
+}
+
+async function stageSource(
   root: string,
   acquired: AcquiredSource,
   deps: StoreDependencies,
-): Promise<Installation> {
+  previous?: Receipt,
+) {
+  const { state } = storePaths(root);
+  await validateSource(acquired.directory, Object.values(storePaths(root)));
+  const stage = await mkdtemp(join(state, "stage-"));
+  const handle = await open(stage, "r");
+  let receipt: Receipt | undefined;
+  try {
+    await deps.snapshotDirectory(acquired.directory, stage);
+    await checkStage(stage, handle);
+    receipt = await stagedReceipt(stage, acquired, deps, previous);
+    await deps.boundary?.("staged");
+    await checkStage(stage, handle);
+    return { receipt, stage };
+  } catch (error) {
+    if (!(await exists(join(state, "journal.json")))) {
+      if (receipt) {
+        const snapshot = await assessSnapshot(stage, deps);
+        assertUpdateReceipt(snapshot.receipt, receipt.source, receipt);
+        if (snapshot.edited) {
+          throw new Error(`Edited staging snapshot retained for inspection: ${stage}`, {
+            cause: error,
+          });
+        }
+      }
+      await cleanupStage(stage, handle);
+    }
+    throw error;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function install(root: string, acquired: AcquiredSource, deps: StoreDependencies) {
   return withLock(root, async () => {
-    const paths = storePaths(root);
     const { stage, receipt } = await stageSource(root, acquired, deps);
-    const target = join(paths.active, receipt.name);
+    const { active, disabled, state } = storePaths(root);
+    const target = join(active, receipt.name);
     try {
-      if ((await exists(target)) || (await exists(join(paths.disabled, receipt.name)))) {
+      if ((await exists(target)) || (await exists(join(disabled, receipt.name)))) {
         throw new Error(`Installation already exists: ${receipt.name}`);
       }
       await transact({
-        boundary: deps.boundary,
-        destroy: async (directory) => destroy(directory, deps),
+        ...transactionOptions(root, deps),
         source: stage,
         stage,
-        state: paths.state,
         target,
-        verify: async (directory) => verifySnapshot(directory, deps),
       });
     } catch (error) {
-      if (!(await exists(join(paths.state, "journal.json"))) && (await exists(stage))) {
+      if (!(await exists(join(state, "journal.json"))) && (await exists(stage))) {
         await destroy(stage, deps);
       }
       throw error;
@@ -221,78 +249,56 @@ async function update(
   acquired: AcquiredSource,
   deps: StoreDependencies,
   expectedReceipt?: Receipt,
-): Promise<Installation> {
+) {
   validateName(name);
   return withLock(root, async () => {
     const previous = await find(root, name, deps);
     assertUpdateReceipt(previous.receipt, acquired.source, expectedReceipt);
-    const paths = storePaths(root);
     const { stage } = await stageSource(root, acquired, deps, previous.receipt);
     await transact({
+      ...transactionOptions(root, deps),
       backup: `${stage}.backup`,
-      boundary: deps.boundary,
-      destroy: async (directory) => destroy(directory, deps),
       source: previous.directory,
       stage,
-      state: paths.state,
       target: previous.directory,
-      verify: async (directory) => verifySnapshot(directory, deps),
     });
     return inspect(previous.directory, previous.enabled, deps);
   });
 }
 
-async function setEnabled(
-  root: string,
-  name: string,
-  enabled: boolean,
-  deps: StoreDependencies,
-): Promise<Installation> {
+async function setEnabled(root: string, name: string, enabled: boolean, deps: StoreDependencies) {
   validateName(name);
   return withLock(root, async () => {
     const previous = await find(root, name, deps);
     if (previous.enabled === enabled) {
       return previous;
     }
-    const paths = storePaths(root);
-    const target = join(enabled ? paths.active : paths.disabled, name);
+    const target = join(storePaths(root)[enabled ? "active" : "disabled"], name);
     await transact({
-      boundary: deps.boundary,
-      destroy: async (directory) => destroy(directory, deps),
+      ...transactionOptions(root, deps),
       source: previous.directory,
-      state: paths.state,
       target,
-      verify: async (directory) => verifySnapshot(directory, deps),
     });
     return inspect(target, enabled, deps);
   });
 }
 
-async function removeInstallation(
-  root: string,
-  name: string,
-  deps: StoreDependencies,
-): Promise<void> {
+async function removeInstallation(root: string, name: string, deps: StoreDependencies) {
   validateName(name);
   return withLock(root, async () => {
     const previous = await find(root, name, deps);
-    const paths = storePaths(root);
-    const reservation = join(paths.state, `remove-${name}`);
     await transact({
-      backup: reservation,
-      boundary: deps.boundary,
-      destroy: async (directory) => destroy(directory, deps),
+      ...transactionOptions(root, deps),
+      backup: join(storePaths(root).state, `remove-${name}`),
       source: previous.directory,
-      state: paths.state,
-      verify: async (directory) => verifySnapshot(directory, deps),
     });
   });
 }
 
-type StoreDiagnostics = Readonly<{
-  installations: readonly Installation[];
-  problems: readonly string[];
-}>;
+interface StoreDiagnostics {
+  readonly installations: readonly Installation[];
+  readonly problems: readonly string[];
+}
 
 async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagnostics> {
   const installations = await listInstallations(root, deps);
@@ -304,13 +310,12 @@ async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagn
       ? entry.problem.split("\n")
       : [`${entry.name}: ${entry.problem}`];
   });
-  const names = new Set<string>();
-  for (const entry of installations) {
-    if (names.has(entry.name)) {
-      problems.push(`Conflicting active/disabled installation: ${entry.name}`);
-    }
-    names.add(entry.name);
-  }
+  const duplicateNames = installations
+    .map((entry) => entry.name)
+    .filter((name, index, names) => names.indexOf(name) !== index);
+  problems.push(
+    ...duplicateNames.map((name) => `Conflicting active/disabled installation: ${name}`),
+  );
   return { installations, problems };
 }
 
