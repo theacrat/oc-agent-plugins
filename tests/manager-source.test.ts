@@ -1,6 +1,16 @@
 import { execFile } from "node:child_process";
-import { chmod, link, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { devNull } from "node:os";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import pathModule from "node:path";
 import { pathToFileURL } from "node:url";
 // Adapt the Node subprocess boundary without a shell.
@@ -11,8 +21,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fingerprintDirectory } from "#src/manager/fingerprint.ts";
 import { readMetadata } from "#src/manager/metadata.ts";
 import { validateReceipt } from "#src/manager/receipt.ts";
-// eslint-disable-next-line import/max-dependencies -- Source integration coverage exercises each source and receipt boundary.
 import { snapshotDirectory } from "#src/manager/snapshot.ts";
+// eslint-disable-next-line import/max-dependencies -- Source integration coverage exercises each source and receipt boundary.
 import { acquireSource, parseSource } from "#src/manager/source.ts";
 import type { Source } from "#src/manager/types.ts";
 
@@ -62,6 +72,9 @@ const receipt = (source: unknown): unknown => ({
 // eslint-disable-next-line typescript/strict-void-return
 const executeFile = promisify(execFile);
 const runGit = async (directory: string, args: readonly string[]): Promise<string> => {
+  const sandbox = await fixture();
+  const config = join(sandbox, "empty.config");
+  await writeFile(config, "", { flag: "wx" });
   const result = await executeFile(
     "git",
     [
@@ -79,7 +92,7 @@ const runGit = async (directory: string, args: readonly string[]): Promise<strin
       cwd: directory,
       encoding: "utf8",
       env: {
-        GIT_CONFIG_GLOBAL: devNull,
+        GIT_CONFIG_GLOBAL: config.split(pathModule.sep).join("/"),
         GIT_CONFIG_NOSYSTEM: "1",
         HOME: directory,
         PATH: process.env["PATH"] ?? "/usr/bin:/bin",
@@ -289,6 +302,7 @@ describe("manager sources", () => {
     await link(join(parent, "data"), join(outside, "data"));
     const filesystem = await import("node:fs/promises");
     const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+    let blockedRename: unknown;
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     vi.mocked(filesystem.open).mockImplementation(async (...args) => {
       const handle = await actual.open(...args);
@@ -297,7 +311,12 @@ describe("manager sources", () => {
         vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
           const result = await originalRead(...readArgs);
           if (result.bytesRead > 0) {
-            await filesystem.rename(parent, join(source, "original"));
+            try {
+              await filesystem.rename(parent, join(source, "original"));
+            } catch (error) {
+              blockedRename = error;
+              throw error;
+            }
             await directoryLink(outside, parent);
           }
           return result;
@@ -305,7 +324,21 @@ describe("manager sources", () => {
       }
       return handle;
     });
-    await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow("parent");
+    const acquisition = snapshotDirectory(source, join(root, "copy"));
+    await expect(acquisition).rejects.toThrow();
+    if (blockedRename === undefined) {
+      await expect(acquisition).rejects.toThrow("parent");
+    } else {
+      expect(nativePlatform).toBe("win32");
+      expect(blockedRename).toMatchObject({
+        code: "EPERM",
+        dest: join(source, "original"),
+        path: parent,
+        syscall: "rename",
+      });
+      await expect(acquisition).rejects.toBe(blockedRename);
+      expect(await readFile(join(parent, "data"), "utf8")).toBe("safe");
+    }
     await expect(readFile(join(root, "copy", "nested", "data"))).rejects.toThrow();
   });
   it("rejects a replaced real parent even when the opened file identity matches", async () => {
@@ -524,8 +557,14 @@ describe("manager sources", () => {
       join(bare, "config"),
       '[core]\n bare = true\n[filter "malicious"]\n smudge = touch SHOULD_NOT_RUN\n',
     );
-    const acquired = await acquireSource(source, join(root, "scratch"));
+    const acquired = await acquireSource(source, join(root, "scratch with ' quote"));
     expect(acquired.revision).toBe(first);
+    const privateScratch = pathModule.dirname(acquired.directory);
+    const config = join(privateScratch, "empty.config");
+    const configStat = await lstat(config);
+    expect(configStat.isFile()).toBe(true);
+    expect(await readFile(config, "utf8")).toBe("");
+    expect(await readdir(join(privateScratch, "empty-hooks"))).toEqual([]);
     expect(await readFile(join(acquired.directory, "value"), "utf8")).toBe("one");
     const metadata = await readMetadata(acquired.directory);
     expect(metadata.manifest.name).toBe("sample");
