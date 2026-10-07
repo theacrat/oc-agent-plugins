@@ -26,7 +26,7 @@ const WITH_DEFAULT = "${MISSING:-fallback}";
 
 const load = async (dir: string, formats?: readonly Format[], env: Record<string, string> = {}) => {
   const result = await loadAll([dir], {
-    dataRoot: path.join(dir, "..", `${path.basename(dir)}-data`),
+    dataRoot: await makeTree({}),
     env,
     ...(formats === undefined ? {} : { formats: new Set(formats) }),
   });

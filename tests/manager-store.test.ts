@@ -2,7 +2,6 @@ import {
   cp,
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   rename,
@@ -27,6 +26,8 @@ import {
 import type { StoreDependencies } from "#src/manager/store.ts";
 import type { AcquiredSource, PluginMetadata } from "#src/manager/types.ts";
 import { RECEIPT } from "#src/manager/types.ts";
+
+import { makeTempDir } from "./fixture.ts";
 
 const { join } = nodePath;
 
@@ -68,7 +69,7 @@ const deps: StoreDependencies = {
 };
 
 beforeEach(async () => {
-  directory = await mkdtemp("/tmp/opencode/store-test-");
+  directory = await makeTempDir("store-test-");
   root = join(directory, "project", ".opencode", "agent-plugins");
   const path = join(directory, "source");
   await mkdir(path);

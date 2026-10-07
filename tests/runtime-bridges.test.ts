@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,9 @@ import { loadRuntimeComponents } from "#src/vendor/runtimes.ts";
 import { exportTheme, loadThemes, parseTheme } from "#src/vendor/themes.ts";
 import { loadWorkflows, parseWorkflow } from "#src/vendor/workflows.ts";
 
+// eslint-disable-next-line import/max-dependencies -- Runtime bridge coverage also needs private filesystem fixtures.
+import { makeTempDir } from "./fixture.ts";
+
 const ignoreReport = (entry: Diagnostic) => {
   expect(["error", "warning"]).toContain(entry.severity);
 };
@@ -20,7 +23,7 @@ const ignoreReport = (entry: Diagnostic) => {
 const roots: string[] = [];
 const disposers: (() => Promise<void>)[] = [];
 const temporary = async () => {
-  const root = await mkdtemp("/tmp/opencode/bridges-");
+  const root = await makeTempDir("bridges-");
   roots.push(root);
   return root;
 };

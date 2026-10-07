@@ -44,6 +44,7 @@ describe("integration safety boundaries", () => {
   });
 
   it.each([false, true])("cleans every registration when prompt setup fails=%s", async (fails) => {
+    const directory = await makeTree({});
     let acquired = 0;
     let disposed = 0;
     const register = async () => {
@@ -65,7 +66,7 @@ describe("integration safety boundaries", () => {
           }
         },
       },
-      location: { directory: "/tmp/opencode", project: { directory: "/tmp/opencode" } },
+      location: { directory, project: { directory } },
       session: {
         hook: async (name: string) => {
           if (fails && name === "prompt") {

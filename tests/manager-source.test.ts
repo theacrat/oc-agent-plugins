@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { devNull } from "node:os";
 import pathModule from "node:path";
 import { pathToFileURL } from "node:url";
 // Adapt the Node subprocess boundary without a shell.
@@ -10,11 +11,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fingerprintDirectory } from "#src/manager/fingerprint.ts";
 import { readMetadata } from "#src/manager/metadata.ts";
 import { validateReceipt } from "#src/manager/receipt.ts";
+// eslint-disable-next-line import/max-dependencies -- Source integration coverage exercises each source and receipt boundary.
 import { snapshotDirectory } from "#src/manager/snapshot.ts";
-// This integration suite exercises every source boundary and the receipt policy.
-// eslint-disable-next-line import/max-dependencies
 import { acquireSource, parseSource } from "#src/manager/source.ts";
 import type { Source } from "#src/manager/types.ts";
+
+import { makeTempDir } from "./fixture.ts";
 
 const RECEIPT = ".oc-agent-plugin.json";
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -24,7 +26,7 @@ vi.mock("node:fs/promises", { spy: true });
 
 const temporary: string[] = [];
 const fixture = async (): Promise<string> => {
-  const root = await mkdtemp("/tmp/opencode/manager-source-");
+  const root = await makeTempDir("manager-source-");
   temporary.push(root);
   return root;
 };
@@ -55,10 +57,10 @@ const runGit = async (directory: string, args: readonly string[]): Promise<strin
       cwd: directory,
       encoding: "utf8",
       env: {
-        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_GLOBAL: devNull,
         GIT_CONFIG_NOSYSTEM: "1",
         HOME: directory,
-        PATH: "/usr/bin:/bin",
+        PATH: process.env["PATH"] ?? "/usr/bin:/bin",
       },
     },
   );

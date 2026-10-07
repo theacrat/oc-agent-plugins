@@ -10,7 +10,7 @@ import { DATA, HOME_PLACEHOLDER, ROOT, makeTree, manifest, mcp, skill } from "./
 const byText = (left = "", right = "") => left.localeCompare(right);
 
 const load = async (dir: string, platform: NodeJS.Platform = "linux") => {
-  const dataRoot = path.join(dir, "..", `${dir.split("/").at(-1)}-data`);
+  const dataRoot = await makeTree({});
   return { ...(await loadPlugin(dir, { dataRoot, platform })), dataRoot };
 };
 
@@ -79,7 +79,7 @@ describe("mcp", () => {
     expect(plugin?.servers).toEqual({
       local: {
         args: ["--root", `${root}/cfg`, HOME_PLACEHOLDER, data],
-        command: `${root}/bin/server`,
+        command: path.join(root, "bin", "server"),
         cwd: root,
         env: { CONFIG: `${data}/x`, PLUGIN_DATA: data, PLUGIN_ROOT: root },
         type: "stdio",
@@ -99,12 +99,13 @@ describe("mcp", () => {
       "mcp.json": mcp({ s: { args: [DATA], command: "node", type: "stdio" } }),
       "plugin.json": manifest(),
     });
+    const dataRoot = path.join(await makeTree({}), ROOT);
     const { plugin } = await loadPlugin(dir, {
-      dataRoot: `/tmp/opencode/${ROOT}`,
+      dataRoot,
       platform: "linux",
     });
     const server = plugin?.servers["s"];
-    expect(server?.type === "stdio" && server.args).toEqual([`/tmp/opencode/${ROOT}/demo`]);
+    expect(server?.type === "stdio" && server.args).toEqual([path.join(dataRoot, "demo")]);
   });
 
   it("skips invalid entries but keeps valid siblings", async () => {
@@ -226,7 +227,7 @@ describe("plugins", () => {
     });
     expect(result.plugins.map((entry) => entry.manifest.name)).toEqual(["alpha", "delta"]);
     expect(result.diagnostics.map((entry) => entry.message)).toEqual([
-      expect.stringMatching(/^skipped .*\/b; a plugin with this name was already loaded from/u),
+      `skipped ${path.join(dir, "b")}; a plugin with this name was already loaded from ${path.join(dir, "a")}`,
     ]);
   });
 });

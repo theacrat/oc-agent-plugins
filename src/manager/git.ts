@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { devNull } from "node:os";
 import pathModule from "node:path";
 // Node's callback subprocess API is adapted once at the execution boundary.
 import { promisify } from "node:util";
@@ -21,11 +22,10 @@ import type { AcquiredSource, Source } from "#src/manager/types.ts";
 const executeFile = promisify(execFile);
 
 const gitEnvironment = (scratch: string): Record<string, string> => ({
-  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_GLOBAL: devNull,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_NO_REPLACE_OBJECTS: "1",
-  GIT_SSH_COMMAND:
-    "ssh -F /dev/null -oBatchMode=yes -oPermitLocalCommand=no -oClearAllForwardings=yes",
+  GIT_SSH_COMMAND: `ssh -F '${devNull.replaceAll("'", String.raw`'\''`)}' -oBatchMode=yes -oPermitLocalCommand=no -oClearAllForwardings=yes`,
   GIT_TERMINAL_PROMPT: "0",
   HOME: scratch,
   // Only executable discovery is inherited, not Git or SSH configuration.
@@ -123,9 +123,9 @@ async function git(
       [
         `--git-dir=${pathModule.join(scratch, "repository")}`,
         "-c",
-        "core.hooksPath=/dev/null",
+        `core.hooksPath=${devNull}`,
         "-c",
-        "core.attributesFile=/dev/null",
+        `core.attributesFile=${devNull}`,
         "-c",
         "protocol.allow=never",
         "-c",
