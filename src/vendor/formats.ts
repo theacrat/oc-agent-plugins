@@ -17,7 +17,7 @@ interface FormatSpec {
   readonly rules: boolean;
   // Markdown agents in `agents/` (or declared `agents` paths, which replace the default).
   readonly agents: boolean;
-  // Fields this plugin can't map to OpenCode; reported so users see what's missing.
+  // Vendor fields this adapter does not implement, irrespective of OpenCode's capabilities.
   readonly unsupported: readonly string[];
   readonly unsupportedDirs: readonly string[];
 }

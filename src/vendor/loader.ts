@@ -65,7 +65,7 @@ const reportUnsupported = async (
   const missing = [...new Set([...fields, ...dirs.filter((dir) => dir !== undefined)])];
   if (missing.length > 0) {
     report({
-      message: `not supported in OpenCode and ignored: ${missing.join(", ")}`,
+      message: `not implemented by this adapter and ignored: ${missing.join(", ")}`,
       severity: "warning",
       source: spec.manifest,
     });

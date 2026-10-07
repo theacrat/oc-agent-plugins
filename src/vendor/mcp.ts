@@ -9,7 +9,8 @@ import type { PluginServer, Report } from "#src/types.ts";
 import { componentPaths } from "#src/vendor/paths.ts";
 import type { Placeholders } from "#src/vendor/placeholders.ts";
 
-// Host-specific keys that don't change how the server connects; ignored with a warning.
+// Vendor fields this adapter currently ignores. Some affect connection and security policy;
+// docs/compatibility-audit.md records those gaps. They must not be called harmless metadata.
 const IGNORED_FIELDS = new Set([
   "default_tools_approval_mode",
   "disabled",

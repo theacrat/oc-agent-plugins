@@ -71,10 +71,10 @@ The plugin also adds `/agent-plugins`. It rescans everything, reloads it, and po
   - Commands follow Claude's argument rules: `$ARGUMENTS`, 0-based `$N` and `$ARGUMENTS[N]`, named `arguments`, and the trailing `ARGUMENTS:` fallback. They also run `` !`cmd` `` injection in the session directory. Injections only come from the command file itself. Anything in the text you type after the command is never run.
   - A Claude plugin with no manifest still loads when a marketplace lists it. Codex and Cursor plugins need their manifest.
   - `disable-model-invocation` hides a skill from the model, but you can still load it by ID.
-- **Codex**: reads `.codex-plugin/plugin.json`, `skills/` plus any declared `skills`, `.mcp.json` and declared `mcpServers`. `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded, along with their `CLAUDE_` aliases. Host-only keys like `env_vars` and `enabled` are ignored with a warning.
+- **Codex**: reads `.codex-plugin/plugin.json`, `skills/` plus any declared `skills`, `.mcp.json` and declared `mcpServers`. `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded, along with their `CLAUDE_` aliases. Several behavioural fields, including `enabled`, `oauth` and tool-policy settings, are currently ignored with a warning. These are compatibility gaps, not harmless metadata; see the audit before importing vendor MCP configurations.
 - **Cursor**: reads `.cursor-plugin/plugin.json`, `skills/`, `rules/`, `commands/` and `mcp.json`. A declared path replaces the default location. A root `SKILL.md` counts as a single-skill plugin. `${CURSOR_PLUGIN_ROOT}` is expanded. Commands use OpenCode's own argument rules.
 
-Hooks, LSP servers, apps, output styles, `userConfig` and Cursor `variables` have no OpenCode equivalent. Each plugin that uses them gets a warning listing what was ignored. SSE, WebSocket and MCP bundle (`.mcpb`) servers are skipped with a warning.
+Hooks, LSP servers, apps, output styles, `userConfig` and Cursor `variables` are not implemented by this adapter. This does not mean OpenCode lacks the underlying capabilities. See [the compatibility audit](docs/compatibility-audit.md) for the distinction and the remaining behavioural gaps. SSE, WebSocket and MCP bundle (`.mcpb`) servers are skipped with a warning.
 
 ## Diagnostics
 

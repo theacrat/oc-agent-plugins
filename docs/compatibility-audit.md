@@ -1,0 +1,49 @@
+# Skipped-feature audit
+
+Audited against the OpenCode V2 documentation, published OpenAPI contract and installed `@opencode/plugin` 2.0.24 types. These are capability findings, not claims that the adapters have been implemented or runtime-verified.
+
+## OpenCode capabilities versus adapter gaps
+
+| Vendor feature                 | Evidence in OpenCode V2                                                                                                   | Current adapter status                                                                                                                                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hooks                          | `ctx.tool.hook`, `ctx.session.hook`, `ctx.permission.hook`, `ctx.shell.hook`, event subscriptions and worktree strategies | Not implemented. Some events have direct counterparts, but vendor stdin/stdout contracts, tool names, matchers, blocking decisions, trust and lifecycle semantics must be translated individually.                                                             |
+| Output styles                  | The session `context` hook can edit system instructions; agent `system` can replace the base prompt                       | Implementable, not implemented. Selection, `keep-coding-instructions`, `force-for-plugin`, precedence and subagent scope need an explicit adapter design. Appending all styles would not preserve their semantics.                                             |
+| LSP servers                    | `Config.LSP.ServerEncoded` supports command, extensions, environment and initialization                                   | OpenCode has LSP configuration. The current plugin context has no LSP domain/transform. Its exposed experimental config patch only supports the global shell setting. A config writer or OpenCode API addition would be needed for normal native registration. |
+| Claude `userConfig`            | Plugin options, storage, integration credential methods and forms provide related building blocks                         | Not implemented. Requires validation, user-provided values, defaults, sensitive-value storage and field-specific expansion. Ordinary plugin storage must not be treated as a secure credential vault.                                                          |
+| Cursor `variables`             | Values could come from adapter options or credential integrations                                                         | Not implemented. Cursor's dashboard is not available in OpenCode, but declared-variable substitution can be adapted without it. Unconfigured placeholders currently remain literal.                                                                            |
+| Codex `.app.json`              | OpenCode has MCP and integrations                                                                                         | OpenAI registered app IDs are not MCP endpoint URLs. An ID alone cannot be connected without OpenAI's resolution/authentication infrastructure. Explicit MCP endpoints are already supported separately.                                                       |
+| Claude channels                | Events and synthetic session messages offer parts of a bridge                                                             | No native Claude channel protocol is exposed by the current plugin context. A bridge would need routing, opt-in, authentication and protocol handling. Not implemented.                                                                                        |
+| Workflows and monitors         | Tools, commands, background child processes and session APIs provide related primitives                                   | No direct vendor workflow/monitor runtime. A separate adapter could implement a subset, with process ownership, cancellation and cleanup. Not implemented.                                                                                                     |
+| Experimental themes            | CLI plugin context exposes theme tokens and rendering APIs                                                                | A server-only plugin cannot directly import a vendor theme into the terminal. Would require a CLI-side adapter; other experimental fields need individual evaluation.                                                                                          |
+| SSE / MCP WebSocket            | V2 documents remote MCP as Streamable HTTP; native remote config has no transport selector                                | Not exposed through native MCP registration. Provider WebSocket hooks concern model traffic, not MCP. The adapter correctly skips rather than changing the declared transport.                                                                                 |
+| MCP bundles (`.mcpb` / `.dxt`) | Can potentially be unpacked and mapped to local MCP definitions                                                           | Not implemented by this adapter. Requires archive validation, containment and bundle configuration handling; not an inherent OpenCode limitation.                                                                                                              |
+| Cursor glob-scoped rules       | Tool hooks can inspect file-oriented operations; context hooks can add instructions                                       | Currently approximated as discoverable skills. This does not reproduce automatic file-glob activation.                                                                                                                                                         |
+| Vendor model aliases           | OpenCode models use provider/model IDs                                                                                    | Aliases such as `sonnet` inherit the session model with a warning. Configurable alias resolution is possible but not implemented.                                                                                                                              |
+
+## Behaviour-changing MCP fields currently lost
+
+The vendor parser labels the following fields as ignored host metadata. They are not all harmless metadata.
+
+| Field                                                   | Consequence / mapping opportunity                                                                                                                                                            |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`, `disabled`                                   | OpenCode has `disabled`. Dropping `enabled: false` currently enables the server instead.                                                                                                     |
+| `oauth`                                                 | OpenCode has `oauth: false` and native OAuth configuration. Dropping `false` restores default OAuth behaviour. Vendor object schemas need explicit translation.                              |
+| `startup_timeout_sec`, `tool_timeout_sec`, `timeout`    | OpenCode supports startup, catalog and execution timeouts in milliseconds. These can be translated after vendor-specific validation.                                                         |
+| `enabled_tools`, `tools`, `default_tools_approval_mode` | OpenCode tool transforms and permission hooks provide enforcement mechanisms. Current parsing drops tool availability and approval restrictions.                                             |
+| `env_vars`                                              | Names identify ambient variables to pass to subprocesses. OpenCode inherits an environment, but that is not equivalent to preserving vendor environment policy.                              |
+| `headersHelper`                                         | A command can generate authentication headers. Dropping it may make a server unusable or change authentication behaviour. No native dynamic-header callback is exposed by the MCP transform. |
+| `oauth_resource`, `omit_tools_from`, `alwaysLoad`       | Vendor-specific behaviour, not proven to be semantically irrelevant. Currently ignored with a warning.                                                                                       |
+
+The enablement, OAuth and policy losses were reproduced by calling `parseVendorServer` with literal fixtures; no server connections were made. Full vendor compatibility must not be claimed until these gaps are handled. Loading vendor install directories also does not import the host applications' enabled-plugin/trust settings.
+
+## Sources
+
+- [OpenCode plugin API](https://opencode.ai/v2/docs/build/plugins)
+- [OpenCode MCP configuration](https://opencode.ai/v2/docs/mcp-servers/)
+- [OpenCode configuration](https://opencode.ai/v2/docs/config/)
+- [OpenCode CLI plugin API](https://opencode.ai/v2/docs/build/plugins/cli/)
+- [OpenCode tools and permissions](https://opencode.ai/v2/docs/tools/)
+- [Claude hooks](https://code.claude.com/docs/en/hooks)
+- [Claude output styles](https://code.claude.com/docs/en/output-styles)
+- [Cursor plugin reference](https://cursor.com/docs/reference/plugins)
+- [OpenAI plugin packaging](https://developers.openai.com/plugins/build/plugins)

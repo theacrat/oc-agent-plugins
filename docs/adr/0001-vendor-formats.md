@@ -44,7 +44,7 @@ These are off by default (`vendorDirs: false`), because loading every plugin a u
 
 ### Vendor MCP mapping
 
-Vendor `.mcp.json` entries infer their transport: `command` means stdio, and `url` with `type: http`, `streamable-http` or no type means Streamable HTTP. `sse` and `ws` are skipped. Unknown keys such as Codex's `env_vars` and `enabled`, or Claude's `oauth_resource`, are ignored with a warning. Ignoring them loses nothing that would change correctness.
+Vendor `.mcp.json` entries infer their transport: `command` means stdio, and `url` with `type: http`, `streamable-http` or no type means Streamable HTTP. `sse` and `ws` are skipped. Keys such as Codex's `env_vars` and `enabled`, or Claude's `oauth_resource`, are currently ignored with a warning. The subsequent [compatibility audit](../compatibility-audit.md) found that several ignored fields change enablement, authentication or tool policy. The earlier claim that ignoring them preserves correctness was wrong.
 
 Every filesystem read goes through `paths.ts`. That keeps the escape check working after symlinks are resolved on both sides, including for marketplace `source` entries. It also turns an unreadable or vanished file into a diagnostic for that one component instead of an exception.
 
