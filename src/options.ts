@@ -1,10 +1,13 @@
 import path from "node:path";
 
-import { isRecord, isStringArray } from "#src/json.ts";
+import { isRecord, isStringArray, isStringRecord } from "#src/json.ts";
+import { checkHeaders, checkUrl } from "#src/mcp.ts";
 import { COMPONENTS, FORMATS } from "#src/types.ts";
 import type { Component, Diagnostic, Format } from "#src/types.ts";
+import type { AppEndpoint } from "#src/vendor/bridges.ts";
 
 interface Options {
+  readonly appEndpoints: Readonly<Record<string, AppEndpoint>>;
   readonly searchPaths: readonly string[];
   readonly codexCache?: string;
   readonly dataRoot: string;
@@ -42,7 +45,44 @@ const SCALARS: Readonly<Record<string, ScalarRule>> = {
     valid: (value) => typeof value === "boolean",
   },
 };
-const KNOWN = new Set([...Object.keys(SCALARS), "formats", "components"]);
+const KNOWN = new Set([...Object.keys(SCALARS), "formats", "components", "appEndpoints"]);
+
+const parseAppEndpoints = (
+  raw: unknown,
+  report: (diagnostic: Diagnostic) => void,
+): Record<string, AppEndpoint> => {
+  if (raw === undefined) {
+    return {};
+  }
+  if (!isRecord(raw)) {
+    report({
+      message: "appEndpoints must be an object of explicit MCP endpoint mappings",
+      severity: "error",
+      source: "options",
+    });
+    return {};
+  }
+  const result: Record<string, AppEndpoint> = {};
+  for (const [id, value] of Object.entries(raw)) {
+    const error = isRecord(value)
+      ? (checkUrl(value["url"]) ??
+        (value["headers"] === undefined ? undefined : checkHeaders(value["headers"])))
+      : "endpoint must be an object";
+    if (error !== undefined || !isRecord(value)) {
+      report({
+        message: `invalid appEndpoints mapping for ${id}: ${error}`,
+        severity: "error",
+        source: "options",
+      });
+    } else {
+      result[id] = {
+        url: String(value["url"]),
+        ...(isStringRecord(value["headers"]) ? { headers: value["headers"] } : {}),
+      };
+    }
+  }
+  return result;
+};
 
 const expandHome = (value: string, home: string) => value.replace(/^~(?=\/|$)/u, home);
 
@@ -120,6 +160,7 @@ const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => v
       : []),
   ];
   return {
+    appEndpoints: parseAppEndpoints(raw["appEndpoints"], report),
     ...(vendor.codexCache === undefined ? {} : { codexCache: vendor.codexCache }),
     components,
     dataRoot:

@@ -33,15 +33,7 @@ const SPECS: Readonly<Record<VendorFormat, FormatSpec>> = {
     mcpDefaults: [".mcp.json"],
     rules: false,
     skillsDeclaredReplaces: false,
-    unsupported: [
-      "hooks",
-      "lspServers",
-      "outputStyles",
-      "workflows",
-      "userConfig",
-      "channels",
-      "experimental",
-    ],
+    unsupported: ["hooks", "outputStyles", "workflows", "userConfig", "channels", "experimental"],
     unsupportedDirs: ["hooks", "output-styles", "monitors"],
   },
   codex: {
@@ -53,7 +45,7 @@ const SPECS: Readonly<Record<VendorFormat, FormatSpec>> = {
     mcpDefaults: [".mcp.json"],
     rules: false,
     skillsDeclaredReplaces: false,
-    unsupported: ["hooks", "apps"],
+    unsupported: ["hooks"],
     unsupportedDirs: ["hooks"],
   },
   cursor: {

@@ -6,6 +6,7 @@ import { ensureDir, listDir, readText, realOrSelf, resolveWithin } from "#src/pa
 import { discoverSkills } from "#src/skills.ts";
 import { FORMATS } from "#src/types.ts";
 import type { AgentPlugin, Diagnostic, Format, LoadResult, Report } from "#src/types.ts";
+import type { AppEndpoint } from "#src/vendor/bridges.ts";
 import { codexCachePlugins } from "#src/vendor/codex-cache.ts";
 import { hasVendorManifest, loadVendorPlugin } from "#src/vendor/loader.ts";
 import {
@@ -16,6 +17,7 @@ import type { MarketplaceEntry } from "#src/vendor/marketplace.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface LoadOptions {
+  readonly appEndpoints?: Readonly<Record<string, AppEndpoint>>;
   readonly dataRoot: string;
   // Codex's versioned install cache; each newest version directory is loaded as a plugin root.
   readonly codexCache?: string;
@@ -103,6 +105,7 @@ const loadCandidate = async (candidate: Candidate, options: LoadOptions): Promis
     candidate.root,
     candidate.format,
     {
+      appEndpoints: options.appEndpoints ?? {},
       dataRoot: options.dataRoot,
       env: options.env ?? {},
       ...(candidate.entry === undefined ? {} : { entry: candidate.entry }),

@@ -17,6 +17,7 @@ import {
 } from "#src/opencode.ts";
 import { parseOptions } from "#src/options.ts";
 import type { Options } from "#src/options.ts";
+import { addLspExportCommand } from "#src/runtime/lsp.ts";
 import { describeInjections, injectShell, shellRunner } from "#src/shell.ts";
 import { renderCommand } from "#src/template.ts";
 import type { Rendered } from "#src/template.ts";
@@ -97,6 +98,7 @@ const registerCommands = async (
     return injectShell(rendered, session.location.directory, AbortSignal.timeout(60_000), runShell);
   };
   await ctx.command.transform((editor) => {
+    addLspExportCommand(ctx, editor, () => state.current);
     editor.add({
       description: "Rescan Agent Plugins and show what loaded",
       async execute({ sessionID }) {
@@ -128,6 +130,7 @@ export default Plugin.define({
     const { diagnostics: optionDiagnostics, options } = readOptions(ctx);
     const load = async (): Promise<LoadResult> => {
       const result = await loadAll(options.searchPaths, {
+        appEndpoints: options.appEndpoints,
         dataRoot: options.dataRoot,
         env: process.env,
         formats: options.formats,

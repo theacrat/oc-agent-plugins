@@ -158,7 +158,12 @@ describe("claude", () => {
     const { diagnostics } = await load(dir);
     expect(diagnostics).toEqual([
       {
-        message: "not implemented by this adapter and ignored: lspServers, hooks/",
+        message: "LSP config is missing or outside the plugin root",
+        severity: "error",
+        source: "x/.lsp.json",
+      },
+      {
+        message: "not implemented by this adapter and ignored: hooks/",
         severity: "warning",
         source: "x/.claude-plugin/plugin.json",
       },
@@ -204,7 +209,7 @@ describe("codex", () => {
     expect(server?.type === "stdio" && server.args).toEqual([`${root}/a`, TOKEN]);
     expect(server?.type === "stdio" && server.cwd).toBe(root);
     expect(diagnostics.map((entry) => entry.message)).toEqual([
-      "not implemented by this adapter and ignored: apps",
+      "app manifest is missing or escapes the plugin root",
       "ignoring host-specific fields: enabled, env_vars",
     ]);
   });

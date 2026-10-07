@@ -1,17 +1,21 @@
 import path from "node:path";
 
 import type { JsonRecord } from "#src/json.ts";
-import { ensureDir, readText, resolveWithin } from "#src/paths.ts";
+import { readText, resolveWithin } from "#src/paths.ts";
 import type { AgentPlugin, Manifest, Report } from "#src/types.ts";
+import { loadAppMappings, reportBlockedRuntimes } from "#src/vendor/bridges.ts";
+import type { AppEndpoint } from "#src/vendor/bridges.ts";
 import { loadAgents, loadCommands, loadRules, loadSkills } from "#src/vendor/components.ts";
 import { SPECS } from "#src/vendor/formats.ts";
 import type { FormatSpec } from "#src/vendor/formats.ts";
+import { expandLsp, loadLsp } from "#src/vendor/lsp.ts";
 import { parseVendorManifest } from "#src/vendor/manifest.ts";
 import { discoverVendorServers } from "#src/vendor/mcp.ts";
 import { placeholdersFor } from "#src/vendor/placeholders.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface VendorLoadOptions {
+  readonly appEndpoints?: Readonly<Record<string, AppEndpoint>>;
   readonly dataRoot: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   // A marketplace entry can stand in for (or add to) a missing manifest.
@@ -86,13 +90,17 @@ const loadVendorPlugin = async (
   const { manifest, raw } = read;
   const dataDir = path.join(options.dataRoot, manifest.name);
   const placeholders = placeholdersFor(format, { dataDir, env: options.env, root });
+  const apps = await loadAppMappings(root, raw["apps"], options.appEndpoints ?? {}, report);
   // Claude Code substitutes plugin paths in skill and command bodies; Codex and Cursor don't.
   const expandBody = format === "claude" ? placeholders.expandContent : undefined;
-  const [skills, servers, commands, rules, agents] = await Promise.all([
+  const [skills, servers, commands, rules, agents, lsp] = await Promise.all([
     loadSkills(root, spec, raw, expandBody, report),
     discoverVendorServers(
       {
-        declared: raw["mcpServers"],
+        declared:
+          Object.keys(apps).length === 0
+            ? raw["mcpServers"]
+            : [raw["mcpServers"], apps].filter((entry) => entry !== undefined),
         declaredReplacesDefaults: spec.mcpDeclaredReplaces,
         defaults: spec.mcpDefaults,
       },
@@ -102,17 +110,24 @@ const loadVendorPlugin = async (
     loadCommands(root, spec, raw, expandBody, report),
     loadRules(root, spec, raw, report),
     loadAgents(root, spec, raw, expandBody, report),
+    format === "claude" ? loadLsp(root, raw["lspServers"], report) : Promise.resolve({}),
+    reportBlockedRuntimes(root, raw, report),
     reportUnsupported(root, spec, raw, report),
   ]);
-  if (Object.values(servers).some((server) => server.type === "stdio")) {
-    const error = await ensureDir(dataDir);
-    if (error !== undefined) {
-      report({ message: error, severity: "error", source: spec.manifest });
-    }
-  }
   return {
     ok: true,
-    plugin: { agents, commands, dataDir, format, manifest, root, rules, servers, skills },
+    plugin: {
+      agents,
+      commands,
+      dataDir,
+      format,
+      lsp: expandLsp(lsp, placeholders.expand),
+      manifest,
+      root,
+      rules,
+      servers,
+      skills,
+    },
   };
 };
 

@@ -1,3 +1,5 @@
+import type { LspDefinition } from "#src/vendor/lsp.ts";
+
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 
@@ -96,6 +98,7 @@ interface StreamableHttpServer {
 type PluginServer = StdioServer | StreamableHttpServer;
 
 interface AgentPlugin {
+  readonly lsp?: Readonly<Record<string, LspDefinition>>;
   readonly format: Format;
   readonly manifest: Manifest;
   readonly root: string;
