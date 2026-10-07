@@ -1,5 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { Plugin } from "@opencode/plugin";
@@ -8,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { registerManagerTool } from "#src/runtime/manager-tool.ts";
 
-import { manifest } from "./fixture.ts";
+import { makeTempDir, manifest } from "./fixture.ts";
 
 const harness = () => {
   let definition: Info | undefined;
@@ -207,7 +206,7 @@ describe("manager tool approval boundary", () => {
   });
 
   it("waits for the native question reply before lookup and installation, and asks again for reads", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "tool-approval-"));
+    const root = await makeTempDir("tool-approval-");
     try {
       const source = path.join(root, "-source with spaces");
       await mkdir(source);
