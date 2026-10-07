@@ -60,33 +60,18 @@ const configurationFor = (
       : { options: options.configuration[name] }),
   });
 
-const assembledPlugin = (
-  manifest: Manifest,
-  root: string,
-  format: VendorFormat,
-  configuration: AgentPlugin["configuration"],
-  dataDir: string,
-  contents: Pick<AgentPlugin, "agents" | "commands" | "rules" | "servers" | "skills">,
-  extras: Awaited<ReturnType<typeof loadExtras>>,
-): AgentPlugin => ({
-  ...contents,
-  ...(configuration === undefined ? {} : { configuration }),
-  dataDir,
-  ...extras,
-  format,
-  manifest,
-  root,
-});
+interface PluginLoadContext {
+  readonly root: string;
+  readonly format: VendorFormat;
+  readonly manifest: Manifest;
+  readonly raw: JsonRecord;
+  readonly options: VendorLoadOptions;
+  readonly report: Report;
+  readonly configuration: NonNullable<AgentPlugin["configuration"]>;
+}
 
-const loadingContext = async (
-  root: string,
-  format: VendorFormat,
-  manifest: Manifest,
-  raw: JsonRecord,
-  options: VendorLoadOptions,
-  report: Report,
-  configuration: NonNullable<AgentPlugin["configuration"]>,
-) => {
+const loadingContext = async (context: PluginLoadContext) => {
+  const { root, format, manifest, raw, options, report, configuration } = context;
   const spec = SPECS[format];
   const components =
     typeof options.components === "function"
@@ -111,15 +96,8 @@ const loadingContext = async (
   return { apps, components, configuration, dataDir, extras, placeholders, settings, spec };
 };
 
-const loadSelectedContents = async (
-  root: string,
-  format: VendorFormat,
-  manifest: Manifest,
-  raw: JsonRecord,
-  options: VendorLoadOptions,
-  report: Report,
-  resolved: NonNullable<AgentPlugin["configuration"]>,
-): Promise<AgentPlugin> => {
+const loadSelectedContents = async (context: PluginLoadContext): Promise<AgentPlugin> => {
+  const { root, format, manifest, raw, report } = context;
   const {
     apps,
     components,
@@ -129,7 +107,7 @@ const loadSelectedContents = async (
     placeholders,
     settings,
     spec,
-  } = await loadingContext(root, format, manifest, raw, options, report, resolved);
+  } = await loadingContext(context);
   // Claude Code substitutes plugin paths in skill and command bodies; Codex and Cursor don't.
   const [skills, servers, commands, rules, agents, extras] = await Promise.all([
     components.has("skills") ? loadSkills(root, spec, raw, placeholders.expandContent, report) : [],
@@ -152,15 +130,19 @@ const loadSelectedContents = async (
       : [],
     pendingExtras,
   ]);
-  return assembledPlugin(
-    manifest,
-    root,
-    format,
+  return {
+    agents,
+    commands,
     configuration,
     dataDir,
-    { agents, commands, rules, servers, skills },
-    extras,
-  );
+    ...extras,
+    format,
+    manifest,
+    root,
+    rules,
+    servers,
+    skills,
+  };
 };
 
 const loadVendorContents = async (
@@ -173,15 +155,15 @@ const loadVendorContents = async (
 ): Promise<VendorLoad> => {
   const configuration = configurationFor(format, raw, options, manifest.name);
   const report = sanitisedReport(unsafeReport, configuration.redact);
-  const plugin = await loadSelectedContents(
-    root,
+  const plugin = await loadSelectedContents({
+    configuration,
     format,
     manifest,
-    raw,
     options,
+    raw,
     report,
-    configuration,
-  );
+    root,
+  });
   assertModelSafety(plugin);
   return { ok: true, plugin };
 };
