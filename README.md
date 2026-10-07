@@ -32,6 +32,19 @@ Installations are copied snapshots with ownership receipts and content fingerpri
 
 The CLI does not start OpenCode, connect MCP servers, execute package scripts or grant hooks/monitor trust. You still need to load the OpenCode adapter separately and configure trust explicitly when needed. After changing installations, run `/agent-plugins` in OpenCode to rescan.
 
+When the adapter is loaded, run the same management commands directly in OpenCode:
+
+```text
+/agent-plugins-manage install cloudflare/skills
+/agent-plugins-manage install "./my plugin" --global
+/agent-plugins-manage list
+/agent-plugins-manage update --all
+/agent-plugins-manage disable cloudflare
+/agent-plugins-manage doctor
+```
+
+The native command defaults to the invoking session's directory and accepts the CLI's options. It calls the manager directly without spawning `npx`, evaluating shell expressions or asking the model to perform the operation. Results do not resume the model. Run `/agent-plugins` separately to rescan after mutations.
+
 Package-management commands require Linux with `/proc/self/fd` available and Node 22.14 or newer. Help and version run on other platforms. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs (including `ssh://git@host/repository.git`) are supported; archives, npm packages and submodules are not installation sources.
 
 Source symlinks and special files are rejected. Reads verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against adversarial parent-directory swaps on other platforms, so secure file reads fail closed there rather than use a weaker fallback.

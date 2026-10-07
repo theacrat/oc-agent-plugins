@@ -24,6 +24,10 @@ Normal validation failures clean up the newly owned staging directory and leave 
 
 Commands are `install`, `update <name>|--all`, `list`, `info`, `enable`, `disable`, `uninstall` (alias `remove`), `doctor`, `help` and `version`. `--json` gives machine-readable output. Missing packages, invalid arguments, conflicts and unsafe paths fail with nonzero exit codes and actionable messages. Enabling an installation does not grant hooks/monitor trust.
 
+OpenCode exposes the same operations through `/agent-plugins-manage`. Its native command executor calls the shared manager directly, using the invoking session's location as the default project and relative-source base. Quoted arguments are tokenised without shell execution or interpolation. Results and errors are synthetic messages with model continuation disabled. Mutations do not implicitly reload vendor runtime components; `/agent-plugins` remains the explicit rescan command.
+
+Temporary directories use the operating system's temporary-directory resolver and unique owned directories rather than hard-coded global `/tmp` paths. Git isolation uses the platform's null device. Portable scratch paths do not relax the secure payload-read platform requirement.
+
 ## Packaging and verification
 
 TypeScript stays the source language; Bun builds a standalone Node ESM CLI with a `node` shebang into `dist/cli.js`. npm's `bin` maps `oc-agent-plugins` to it. The native OpenCode entrypoint remains raw TypeScript. CI/release build and pack the CLI, verify production-only plugin import and run the packed CLI using Node/npx. No global credentials or version publication are required to test it.
