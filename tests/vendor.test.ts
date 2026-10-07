@@ -366,7 +366,7 @@ describe("format precedence and toggles", () => {
     ]);
     expect(diagnostics.map((entry) => entry.message)).toEqual([
       'unknown option "options.wat"',
-      'unknown formats entry "nope"; expected one of agent-plugins, claude, codex, cursor',
+      'unknown option "formats.nope"',
     ]);
   });
 });
