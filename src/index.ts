@@ -9,9 +9,9 @@ import { scopeComponents, toAgentInfo, toPolicyServerConfigs, toSkillInfo } from
 import { componentsForPlugin, configDirectory, parseOptions } from "#src/options.ts";
 import type { Options } from "#src/options.ts";
 import { registerCompatibility } from "#src/runtime/compatibility.ts";
+import { registerManagerTool } from "#src/runtime/manager-tool.ts";
 import { registerMcpPolicies } from "#src/runtime/mcp-policy.ts";
 import { registerCommands } from "#src/runtime/plugin-commands.ts";
-import { resourceScope } from "#src/runtime/resources.ts";
 import type { Diagnostic, LoadResult } from "#src/types.ts";
 
 type Context = PluginTypes.Context;
@@ -96,7 +96,7 @@ export default Plugin.define({
     const load = async () => loadConfiguredPlugins(options, optionDiagnostics);
     const state: State = { current: await load() };
 
-    const resources = resourceScope();
+    const resources = await registerManagerTool(ctx);
     try {
       resources.own(await registerMcpPolicies(ctx, () => state.current.plugins));
       const compatibility = resources.own(

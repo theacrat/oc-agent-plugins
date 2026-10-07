@@ -45,6 +45,16 @@ When the adapter is loaded, run the same management commands directly in OpenCod
 
 The native command defaults to the invoking session's directory and accepts the CLI's options. It calls the manager directly without spawning `npx`, evaluating shell expressions or asking the model to perform the operation. Results do not resume the model. Run `/agent-plugins` separately to rescan after mutations.
 
+Agents can call the structured `agent_plugins_manage` tool when the adapter is loaded. For example:
+
+```json
+{ "action": "install", "source": "cloudflare/skills" }
+```
+
+Use `name` for named operations, `all: true` for bulk updates and `global: true` for global scope. Git installation also accepts `ref` and `subdir`. The tool uses the invoking session's directory and returns JSON results or safe diagnostic errors.
+
+OpenCode asks for permission before every invocation, including inventory reads. Existing deny rules remain enforced. The tool has no approval-bypass argument, does not grant vendor execution trust and does not automatically rescan. Secure management retains the same Linux requirement as the CLI.
+
 Package-management commands require Linux with `/proc/self/fd` available and Node 22.14 or newer. Help and version run on other platforms. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs (including `ssh://git@host/repository.git`) are supported; archives, npm packages and submodules are not installation sources.
 
 Source symlinks and special files are rejected. Reads verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against adversarial parent-directory swaps on other platforms, so secure file reads fail closed there rather than use a weaker fallback.
