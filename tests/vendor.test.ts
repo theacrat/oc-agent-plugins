@@ -405,6 +405,7 @@ describe("format precedence and toggles", () => {
     ]);
     expect(options.codexCache).toBe("/home/u/.codex/plugins/cache");
     expect(diagnostics.map((entry) => entry.message)).toEqual([
+      "legacy flat options are deprecated; group settings by feature and plugin (see README)",
       'unknown option "wat"',
       'unknown formats entry "nope"; expected one of agent-plugins, claude, codex, cursor',
     ]);

@@ -16,6 +16,7 @@ import type { MarketplaceEntry } from "#src/vendor/marketplace.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface LoadOptions {
+  readonly pluginAppEndpoints?: Readonly<Record<string, Readonly<Record<string, AppEndpoint>>>>;
   readonly configuration?: Readonly<Record<string, PluginConfigurationOptions>>;
   readonly trustedHooks?: readonly string[];
   readonly pluginSettings?: Readonly<Record<string, boolean>>;
@@ -55,6 +56,7 @@ const safeVendorLoad = async (candidate: Candidate, options: LoadOptions, report
         configuration: options.configuration ?? {},
         dataRoot: options.dataRoot,
         env: options.env ?? {},
+        pluginAppEndpoints: options.pluginAppEndpoints ?? {},
         pluginSettings: options.pluginSettings ?? {},
         trustedHooks: options.trustedHooks ?? [],
         ...(candidate.entry === undefined ? {} : { entry: candidate.entry }),

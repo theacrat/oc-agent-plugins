@@ -23,6 +23,24 @@ const serverSources = (raw: JsonRecord, apps: JsonRecord, spec: FormatSpec) => (
   defaults: spec.mcpDefaults,
 });
 
+const appEndpointsFor = (options: VendorLoadOptions, name: string) =>
+  options.pluginAppEndpoints?.[name] ?? options.appEndpoints ?? {};
+
+const configurationFor = (
+  format: VendorFormat,
+  raw: JsonRecord,
+  options: VendorLoadOptions,
+  name: string,
+) =>
+  resolveConfiguration({
+    env: options.env,
+    format,
+    manifest: raw,
+    ...(options.configuration?.[name] === undefined
+      ? {}
+      : { options: options.configuration[name] }),
+  });
+
 const loadVendorContents = async (
   root: string,
   format: VendorFormat,
@@ -34,14 +52,10 @@ const loadVendorContents = async (
   const spec = SPECS[format];
   const dataDir = path.join(options.dataRoot, manifest.name);
   const settings = options.configuration?.[manifest.name];
-  const configuration = resolveConfiguration({
-    env: options.env,
-    format,
-    manifest: raw,
-    ...(settings === undefined ? {} : { options: settings }),
-  });
+  const configuration = configurationFor(format, raw, options, manifest.name);
   const placeholders = placeholdersFor(format, { configuration, dataDir, env: options.env, root });
-  const apps = await loadAppMappings(root, raw["apps"], options.appEndpoints ?? {}, report);
+  const endpoints = appEndpointsFor(options, manifest.name);
+  const apps = await loadAppMappings(root, raw["apps"], endpoints, report);
   // Claude Code substitutes plugin paths in skill and command bodies; Codex and Cursor don't.
   const [skills, servers, commands, rules, agents, extras] = await Promise.all([
     loadSkills(root, spec, raw, placeholders.expandContent, report),

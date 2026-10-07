@@ -3,12 +3,14 @@ import path from "node:path";
 import { parseConfigurationOptions } from "#src/config-options.ts";
 import { isRecord, isStringArray, isStringRecord } from "#src/json.ts";
 import { checkHeaders, checkUrl } from "#src/mcp.ts";
+import { normaliseSettings } from "#src/settings-layout.ts";
 import { COMPONENTS, FORMATS } from "#src/types.ts";
-import type { Component, Diagnostic, Format } from "#src/types.ts";
+import type { Component, Diagnostic, Format, Report } from "#src/types.ts";
 import type { AppEndpoint } from "#src/vendor/bridges.ts";
 import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
 
 interface Options {
+  readonly pluginAppEndpoints: Readonly<Record<string, Readonly<Record<string, AppEndpoint>>>>;
   readonly configuration: Readonly<Record<string, PluginConfigurationOptions>>;
   readonly trustedHooks: readonly string[];
   readonly trustedMonitors: readonly string[];
@@ -58,6 +60,7 @@ const KNOWN = new Set([
   "formats",
   "components",
   "appEndpoints",
+  "pluginAppEndpoints",
   "pluginSettings",
   "configuration",
   "trustedHooks",
@@ -135,6 +138,16 @@ const parseAppEndpoints = (
 
 const expandHome = (value: string, home: string) => value.replace(/^~(?=\/|$)/u, home);
 
+const parsePluginAppEndpoints = (
+  raw: unknown,
+  report: Report,
+): Record<string, Record<string, AppEndpoint>> =>
+  isRecord(raw)
+    ? Object.fromEntries(
+        Object.entries(raw).map(([name, value]) => [name, parseAppEndpoints(value, report)]),
+      )
+    : {};
+
 // `{ claude: false }` turns one entry off; everything defaults to on.
 const toggles = <Key extends string>(
   value: unknown,
@@ -182,7 +195,8 @@ const vendorDirectories = (home: string, formats: ReadonlySet<Format>) => ({
 });
 
 const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => void): Options => {
-  const { home, project, raw } = input;
+  const { home, project } = input;
+  const raw = normaliseSettings(input.raw, report);
   for (const key of Object.keys(raw)) {
     if (!KNOWN.has(key)) {
       report({ message: `unknown option "${key}"`, severity: "warning", source: "options" });
@@ -212,6 +226,7 @@ const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => v
     allowSystemReplacement: raw["allowSystemReplacement"] === true,
     appEndpoints: parseAppEndpoints(raw["appEndpoints"], report),
     configuration: parseConfigurationOptions(raw["configuration"], report),
+    pluginAppEndpoints: parsePluginAppEndpoints(raw["pluginAppEndpoints"], report),
     pluginSettings: parsePluginSettings(raw["pluginSettings"], report),
     trustedHooks: isStringArray(raw["trustedHooks"]) ? raw["trustedHooks"] : [],
     trustedMonitors: isStringArray(raw["trustedMonitors"]) ? raw["trustedMonitors"] : [],

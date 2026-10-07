@@ -29,7 +29,7 @@ const main = async () => {
       dataHome: path.join(process.cwd(), ".agent-plugins-data"),
       home: homedir(),
       project: process.cwd(),
-      raw: { formats, paths, vendorDirs: argv.includes("--vendor-dirs") },
+      raw: { discovery: { paths, vendorDirs: argv.includes("--vendor-dirs") }, formats },
     },
     (diagnostic) => {
       diagnostics.push(diagnostic);

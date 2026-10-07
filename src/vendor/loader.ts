@@ -13,6 +13,7 @@ import { parseVendorManifest } from "#src/vendor/manifest.ts";
 import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface VendorLoadOptions {
+  readonly pluginAppEndpoints?: Readonly<Record<string, Readonly<Record<string, AppEndpoint>>>>;
   readonly configuration?: Readonly<Record<string, PluginConfigurationOptions>>;
   readonly trustedHooks?: readonly string[];
   readonly pluginSettings?: Readonly<Record<string, boolean>>;

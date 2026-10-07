@@ -78,6 +78,7 @@ const loadConfiguredPlugins = async (
     dataRoot: options.dataRoot,
     env: process.env,
     formats: options.formats,
+    pluginAppEndpoints: options.pluginAppEndpoints,
     pluginSettings: options.pluginSettings,
     trustedHooks: options.trustedHooks,
     ...(options.codexCache === undefined ? {} : { codexCache: options.codexCache }),
