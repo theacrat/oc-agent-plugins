@@ -16,7 +16,7 @@ Installed packages are copied snapshots, not live symlinks or mutable Git worktr
 
 Installation validates the manifest only, so missing credentials or unavailable MCP services do not prevent package management. No subprocess from a plugin is launched. Package files must remain inside the resolved source root. `.git` and `node_modules` are excluded. Links are either safely materialised from inside the root or rejected; special files and escaping links are rejected.
 
-Secure payload reads require Linux descriptor-path verification through `/proc/self/fd`. Other platforms fail closed instead of using canonical-path/inode checks that cannot guarantee containment against adversarial parent-directory swaps. Help and version remain available on those platforms. Cross-platform secure payload reads require a future descriptor-relative filesystem bridge.
+The original Linux-only payload-read restriction is superseded by [ADR 0006](0006-cross-platform-management.md). Management uses portable containment and identity checks, with additional descriptor-path verification where available. Untrusted concurrent directory mutation is outside the supported filesystem contract.
 
 Mutations acquire a target-directory lock, stage on the same filesystem, validate and fingerprint before an atomic rename, and roll back replacements on errors. Receipts are committed with the package. Updates preserve plugin identity and reject local edits rather than discarding user work. Interrupted operation metadata must be detected and handled safely. Disable/enable moves managed snapshots into/out of a sibling hidden storage directory; uninstall removes only a verified managed snapshot and retains persistent runtime data.
 

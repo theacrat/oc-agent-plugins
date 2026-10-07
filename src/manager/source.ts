@@ -12,7 +12,8 @@ interface SourceOptions {
 }
 
 const looksRemote = (input: string): boolean =>
-  /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(input) || input.startsWith("git@");
+  !/^[A-Za-z]:[/\\]/u.test(input) &&
+  (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(input) || input.startsWith("git@"));
 
 const parseSource = async (input: string, options: SourceOptions): Promise<Source> => {
   if (input.length === 0 || input.includes("\0")) {

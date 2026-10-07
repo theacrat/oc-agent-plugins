@@ -32,3 +32,28 @@ jobs:
         run: |
           bun pm pack --filename package.tgz
           npm exec --yes --package=./package.tgz -- oc-agent-plugins --version
+
+  manager:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - name: Exercise native manager integration
+        run: bunx vitest run tests/manager-source.test.ts tests/manager-store.test.ts tests/manager-tool.test.ts tests/native-manager.test.ts tests/cli-management.test.ts tests/cli-execute.test.ts tests/fixture.test.ts
+      - run: bun run build
+      - name: Exercise bundled Node CLI lifecycle
+        run: bun scripts/smoke-cli.ts

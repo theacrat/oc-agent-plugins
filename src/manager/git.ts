@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
-import { devNull } from "node:os";
+import { mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import pathModule from "node:path";
 // Node's callback subprocess API is adapted once at the execution boundary.
 import { promisify } from "node:util";
@@ -21,16 +20,22 @@ import type { AcquiredSource, Source } from "#src/manager/types.ts";
 // eslint-disable-next-line typescript/strict-void-return
 const executeFile = promisify(execFile);
 
+const gitPath = (scratch: string, name: string): string =>
+  pathModule.join(scratch, name).split(pathModule.sep).join("/");
+
 const gitEnvironment = (scratch: string): Record<string, string> => ({
-  GIT_CONFIG_GLOBAL: devNull,
+  GIT_CONFIG_GLOBAL: gitPath(scratch, "empty.config"),
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_NO_REPLACE_OBJECTS: "1",
-  GIT_SSH_COMMAND: `ssh -F '${devNull.replaceAll("'", String.raw`'\''`)}' -oBatchMode=yes -oPermitLocalCommand=no -oClearAllForwardings=yes`,
+  GIT_SSH_COMMAND: `ssh -F '${gitPath(scratch, "empty.config").replaceAll("'", String.raw`'\''`)}' -oBatchMode=yes -oPermitLocalCommand=no -oClearAllForwardings=yes`,
   GIT_TERMINAL_PROMPT: "0",
   HOME: scratch,
   // Only executable discovery is inherited, not Git or SSH configuration.
   // eslint-disable-next-line node/no-process-env
   PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+  // Git for Windows needs system executable discovery, not user configuration.
+  // eslint-disable-next-line node/no-process-env
+  ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
 });
 
 const repositorySize = async (directory: string): Promise<number> => {
@@ -123,9 +128,9 @@ async function git(
       [
         `--git-dir=${pathModule.join(scratch, "repository")}`,
         "-c",
-        `core.hooksPath=${devNull}`,
+        `core.hooksPath=${gitPath(scratch, "empty-hooks")}`,
         "-c",
-        `core.attributesFile=${devNull}`,
+        `core.attributesFile=${gitPath(scratch, "empty.config")}`,
         "-c",
         "protocol.allow=never",
         "-c",
@@ -247,12 +252,14 @@ const acquireGitSource = async (
   scratchParent: string,
 ): Promise<AcquiredSource> => {
   await mkdir(scratchParent, { recursive: true });
-  const scratch = await mkdtemp(pathModule.join(pathModule.resolve(scratchParent), "source-"));
+  const scratch = await mkdtemp(pathModule.join(await realpath(scratchParent), "source-"));
   const deadline = Date.now() + 60_000;
   const dispose = async (): Promise<void> => {
     await rm(scratch, { force: true, recursive: true });
   };
   try {
+    await writeFile(pathModule.join(scratch, "empty.config"), "", { flag: "wx", mode: 0o600 });
+    await mkdir(pathModule.join(scratch, "empty-hooks"));
     await git(scratch, ["init", "--bare", "--template=", "repository"], deadline);
     await fetchRepository(scratch, source, deadline, git);
     const resolved = await git(

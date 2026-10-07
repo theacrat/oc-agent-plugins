@@ -1,5 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { Plugin } from "@opencode/plugin";
@@ -13,11 +12,11 @@ import { safeNativeError } from "#src/runtime/manager-errors.ts";
 import { registerCommands } from "#src/runtime/plugin-commands.ts";
 import type { Report } from "#src/types.ts";
 
-import { manifest } from "./fixture.ts";
+import { makeTempDir, manifest } from "./fixture.ts";
 
 const roots: string[] = [];
 const temporary = async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "native-manager-"));
+  const root = await makeTempDir("native-manager-");
   roots.push(root);
   return root;
 };
@@ -101,6 +100,9 @@ describe("native manager arguments", () => {
     ],
     [String.raw`install a\ b "" '' ab"cd"`, ["install", "a b", "", "", "abcd"]],
     ["install -- -source", ["install", "--", "-source"]],
+    [String.raw`install "C:\Users\name\plugin"`, ["install", String.raw`C:\Users\name\plugin`]],
+    [String.raw`install C:\plugins\local`, ["install", String.raw`C:\plugins\local`]],
+    [String.raw`install "\\server\share\plugin"`, ["install", String.raw`\\server\share\plugin`]],
     [
       "$HOME $(touch nope) `cmd` ; | > # literal",
       ["$HOME", "$(touch", "nope)", "`cmd`", ";", "|", ">", "#", "literal"],

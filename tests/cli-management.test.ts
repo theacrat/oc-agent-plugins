@@ -57,19 +57,24 @@ describe("managed CLI lifecycle", () => {
     const diagnosis = await invoke(project, ["doctor"]);
     expect(diagnosis.exitCode).toBe(0);
   });
-  it("fails closed on unsupported platforms but leaves help and version available", async () => {
-    const project = await makeTree({ "README.md": "Project" });
-    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
-    try {
-      await expect(invoke(project, ["list"])).rejects.toThrow("requires Linux");
-      const help = await invoke(project, ["help", "--json"]);
-      const version = await invoke(project, ["version", "--json"]);
-      expect(help.exitCode).toBe(0);
-      expect(version.exitCode).toBe(0);
-    } finally {
-      platform.mockRestore();
-    }
-  });
+  it.each(["darwin", "win32"] as const)(
+    "does not block management on %s",
+    async (nativePlatform) => {
+      const project = await makeTree({ "README.md": "Project" });
+      const platform = vi.spyOn(process, "platform", "get").mockReturnValue(nativePlatform);
+      try {
+        const listed = await invoke(project, ["list", "--json"]);
+        expect(listed.exitCode).toBe(0);
+        expect(entriesFrom(listed.output)).toEqual([]);
+        const help = await invoke(project, ["help", "--json"]);
+        const version = await invoke(project, ["version", "--json"]);
+        expect(help.exitCode).toBe(0);
+        expect(version.exitCode).toBe(0);
+      } finally {
+        platform.mockRestore();
+      }
+    },
+  );
   it("returns machine-readable help without reading a package", async () => {
     const project = await makeTree({ "README.md": "Project" });
     const result = await invoke(project, ["help", "--json"]);

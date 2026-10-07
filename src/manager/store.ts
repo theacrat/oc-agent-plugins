@@ -1,10 +1,13 @@
-import { lstat, mkdtemp, open, readdir, rm } from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
+import { lstat, mkdtemp, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { withLock } from "./lock.ts";
 import {
+  checkStage,
+  cleanupStage,
+  closeStage,
   exists,
+  openStage,
   safeDirectory,
   stateInventory,
   storePaths,
@@ -12,8 +15,9 @@ import {
   validateSource,
   validateTree,
 } from "./paths.ts";
+import type { StageOwner, StoreDiagnostics } from "./paths.ts";
 import { assertUpdateReceipt, readReceipt, writeReceipt } from "./receipt.ts";
-import { transact } from "./transaction.ts";
+import { snapshotTransaction, transact } from "./transaction.ts";
 import { RECEIPT } from "./types.ts";
 import type { AcquiredSource, Installation, PluginMetadata, Receipt } from "./types.ts";
 
@@ -116,18 +120,19 @@ async function verifySnapshot(directory: string, deps: StoreDependencies): Promi
   }
 }
 
-async function destroy(directory: string, deps: StoreDependencies): Promise<void> {
-  await verifySnapshot(directory, deps);
-  await rm(directory, { recursive: true });
-}
-
-function transactionOptions(root: string, deps: StoreDependencies) {
-  return {
-    boundary: deps.boundary,
-    destroy: async (directory: string) => destroy(directory, deps),
-    state: storePaths(root).state,
-    verify: async (directory: string) => verifySnapshot(directory, deps),
-  };
+function transactionOptions(
+  root: string,
+  deps: StoreDependencies,
+  owner?: StageOwner,
+  stage?: string,
+) {
+  return snapshotTransaction(
+    storePaths(root).state,
+    async (directory: string) => verifySnapshot(directory, deps),
+    deps.boundary,
+    owner,
+    stage,
+  );
 }
 
 async function stagedReceipt(
@@ -162,25 +167,6 @@ async function stagedReceipt(
   return receipt;
 }
 
-async function checkStage(stage: string, handle: FileHandle): Promise<void> {
-  await safeDirectory(path.dirname(stage));
-  const original = await handle.stat();
-  const current = await lstat(stage);
-  const sameIdentity = current.dev === original.dev && current.ino === original.ino;
-  if (!current.isDirectory() || !sameIdentity) {
-    throw new Error(`Staging directory replaced; retained for inspection: ${stage}`);
-  }
-}
-
-async function cleanupStage(stage: string, handle: FileHandle): Promise<void> {
-  if (!(await exists(stage))) {
-    return;
-  }
-  await checkStage(stage, handle);
-  // Only this exact mkdtemp directory is owned. rm unlinks nested symlinks, never their targets.
-  await rm(stage, { recursive: true });
-}
-
 async function stageSource(
   root: string,
   acquired: AcquiredSource,
@@ -190,17 +176,22 @@ async function stageSource(
   const { state } = storePaths(root);
   await validateSource(acquired.directory, Object.values(storePaths(root)));
   const stage = await mkdtemp(join(state, "stage-"));
-  const handle = await open(stage, "r");
+  let owner: StageOwner = { identity: await lstat(stage), kind: "identity" };
   let receipt: Receipt | undefined;
+  let transferred = false;
   try {
+    owner = await openStage(stage, owner.identity);
+    await checkStage(stage, owner);
     await deps.snapshotDirectory(acquired.directory, stage);
-    await checkStage(stage, handle);
+    await checkStage(stage, owner);
     receipt = await stagedReceipt(stage, acquired, deps, previous);
     await deps.boundary?.("staged");
-    await checkStage(stage, handle);
-    return { receipt, stage };
+    await checkStage(stage, owner);
+    transferred = true;
+    return { owner, receipt, stage };
   } catch (error) {
     if (!(await exists(join(state, "journal.json")))) {
+      await checkStage(stage, owner);
       if (receipt) {
         const snapshot = await assessSnapshot(stage, deps);
         assertUpdateReceipt(snapshot.receipt, receipt.source, receipt);
@@ -210,17 +201,19 @@ async function stageSource(
           });
         }
       }
-      await cleanupStage(stage, handle);
+      await cleanupStage(stage, owner);
     }
     throw error;
   } finally {
-    await handle.close();
+    if (!transferred) {
+      await closeStage(owner);
+    }
   }
 }
 
 async function install(root: string, acquired: AcquiredSource, deps: StoreDependencies) {
   return withLock(root, async () => {
-    const { stage, receipt } = await stageSource(root, acquired, deps);
+    const { owner, stage, receipt } = await stageSource(root, acquired, deps);
     const { active, disabled, state } = storePaths(root);
     const target = join(active, receipt.name);
     try {
@@ -228,16 +221,18 @@ async function install(root: string, acquired: AcquiredSource, deps: StoreDepend
         throw new Error(`Installation already exists: ${receipt.name}`);
       }
       await transact({
-        ...transactionOptions(root, deps),
+        ...transactionOptions(root, deps, owner, stage),
         source: stage,
         stage,
         target,
       });
     } catch (error) {
       if (!(await exists(join(state, "journal.json"))) && (await exists(stage))) {
-        await destroy(stage, deps);
+        await transactionOptions(root, deps, owner, stage).destroy(stage);
       }
       throw error;
+    } finally {
+      await closeStage(owner);
     }
     return inspect(target, true, deps);
   });
@@ -254,14 +249,18 @@ async function update(
   return withLock(root, async () => {
     const previous = await find(root, name, deps);
     assertUpdateReceipt(previous.receipt, acquired.source, expectedReceipt);
-    const { stage } = await stageSource(root, acquired, deps, previous.receipt);
-    await transact({
-      ...transactionOptions(root, deps),
-      backup: `${stage}.backup`,
-      source: previous.directory,
-      stage,
-      target: previous.directory,
-    });
+    const { owner, stage } = await stageSource(root, acquired, deps, previous.receipt);
+    try {
+      await transact({
+        ...transactionOptions(root, deps, owner, stage),
+        backup: `${stage}.backup`,
+        source: previous.directory,
+        stage,
+        target: previous.directory,
+      });
+    } finally {
+      await closeStage(owner);
+    }
     return inspect(previous.directory, previous.enabled, deps);
   });
 }
@@ -295,11 +294,6 @@ async function removeInstallation(root: string, name: string, deps: StoreDepende
   });
 }
 
-interface StoreDiagnostics {
-  readonly installations: readonly Installation[];
-  readonly problems: readonly string[];
-}
-
 async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagnostics> {
   const installations = await listInstallations(root, deps);
   const problems = installations.flatMap((entry) => {
@@ -319,5 +313,6 @@ async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagn
   return { installations, problems };
 }
 
-export type { StoreDependencies, StoreDiagnostics };
+export type { StoreDependencies };
+export type { StoreDiagnostics } from "./paths.ts";
 export { doctor, install, listInstallations, removeInstallation, setEnabled, update };

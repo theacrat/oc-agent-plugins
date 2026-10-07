@@ -1,6 +1,16 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { devNull } from "node:os";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import pathModule from "node:path";
 import { pathToFileURL } from "node:url";
 // Adapt the Node subprocess boundary without a shell.
@@ -11,8 +21,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fingerprintDirectory } from "#src/manager/fingerprint.ts";
 import { readMetadata } from "#src/manager/metadata.ts";
 import { validateReceipt } from "#src/manager/receipt.ts";
-// eslint-disable-next-line import/max-dependencies -- Source integration coverage exercises each source and receipt boundary.
 import { snapshotDirectory } from "#src/manager/snapshot.ts";
+// eslint-disable-next-line import/max-dependencies -- Source integration coverage exercises each source and receipt boundary.
 import { acquireSource, parseSource } from "#src/manager/source.ts";
 import type { Source } from "#src/manager/types.ts";
 
@@ -21,16 +31,36 @@ import { makeTempDir } from "./fixture.ts";
 const RECEIPT = ".oc-agent-plugin.json";
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const { join } = pathModule;
+const nativePlatform = process.platform;
 
 vi.mock("node:fs/promises", { spy: true });
 
 const temporary: string[] = [];
 const fixture = async (): Promise<string> => {
-  const root = await makeTempDir("manager-source-");
+  const root = await realpath(await makeTempDir("manager-source-"));
   temporary.push(root);
   return root;
 };
 const manifest = JSON.stringify({ $schema: PLUGIN_SCHEMA, name: "sample" });
+const directoryLink = async (target: string, destination: string): Promise<void> => {
+  await symlink(target, destination, nativePlatform === "win32" ? "junction" : "dir");
+};
+const fileLink = async (target: string, destination: string): Promise<boolean> => {
+  try {
+    await symlink(target, destination, "file");
+    return true;
+  } catch (error) {
+    if (
+      nativePlatform === "win32" &&
+      error instanceof Error &&
+      "code" in error &&
+      ["EPERM", "ENOSYS", "ENOTSUP"].includes(String(error.code))
+    ) {
+      return false;
+    }
+    throw error;
+  }
+};
 const receipt = (source: unknown): unknown => ({
   fingerprint: "test",
   format: "agent-plugins",
@@ -42,6 +72,9 @@ const receipt = (source: unknown): unknown => ({
 // eslint-disable-next-line typescript/strict-void-return
 const executeFile = promisify(execFile);
 const runGit = async (directory: string, args: readonly string[]): Promise<string> => {
+  const sandbox = await fixture();
+  const config = join(sandbox, "empty.config");
+  await writeFile(config, "", { flag: "wx" });
   const result = await executeFile(
     "git",
     [
@@ -51,16 +84,21 @@ const runGit = async (directory: string, args: readonly string[]): Promise<strin
       "user.name=Test",
       "-c",
       "user.email=test@example.com",
+      "-c",
+      "core.symlinks=true",
       ...args,
     ],
     {
       cwd: directory,
       encoding: "utf8",
       env: {
-        GIT_CONFIG_GLOBAL: devNull,
+        GIT_CONFIG_GLOBAL: config.split(pathModule.sep).join("/"),
         GIT_CONFIG_NOSYSTEM: "1",
         HOME: directory,
         PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+        ...(process.env["SystemRoot"] === undefined
+          ? {}
+          : { SystemRoot: process.env["SystemRoot"] }),
       },
     },
   );
@@ -140,33 +178,53 @@ describe("manager sources", () => {
     }
   });
 
-  it("fails closed before opening source files on non-Linux platforms", async () => {
-    const root = await fixture();
-    await writeFile(join(root, "plugin.json"), manifest);
-    const filesystem = await import("node:fs/promises");
-    const opened = vi.mocked(filesystem.open);
-    opened.mockClear();
-    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
-    await expect(readMetadata(root)).rejects.toThrow("Secure file containment requires Linux");
-    expect(opened).not.toHaveBeenCalled();
-  });
+  it.each(["darwin", "win32"] as const)(
+    "reads and snapshots files portably on %s",
+    async (platform) => {
+      const root = await fixture();
+      await writeFile(join(root, "plugin.json"), manifest);
+      vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      const metadata = await readMetadata(root);
+      expect(metadata.manifest.name).toBe("sample");
+      const copy = join(await fixture(), "copy");
+      await snapshotDirectory(root, copy);
+      expect(await fingerprintDirectory(copy)).toBe(await fingerprintDirectory(root));
+    },
+  );
 
-  it("fails closed without readable Linux descriptor paths", async () => {
+  it("falls back to portable checks when Linux descriptor paths are absent", async () => {
     const root = await fixture();
     await writeFile(join(root, "plugin.json"), manifest);
     const filesystem = await import("node:fs/promises");
     const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     vi.mocked(filesystem.realpath).mockImplementation(async (file) => {
       if (String(file).startsWith("/proc/self/fd/")) {
-        throw new Error("Descriptor paths unavailable");
+        throw Object.assign(new Error("Descriptor paths unavailable"), { code: "ENOENT" });
       }
       return actual.realpath(file);
     });
     try {
-      await expect(readMetadata(root)).rejects.toThrow("Descriptor paths unavailable");
+      const metadata = await readMetadata(root);
+      expect(metadata.manifest.name).toBe("sample");
     } finally {
       vi.mocked(filesystem.realpath).mockImplementation(actual.realpath);
     }
+  });
+  it("fails closed on unexpected Linux descriptor errors", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "plugin.json"), manifest);
+    const filesystem = await import("node:fs/promises");
+    const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.mocked(filesystem.realpath).mockImplementation(async (file) => {
+      if (String(file).startsWith("/proc/self/fd/")) {
+        throw Object.assign(new Error("Descriptor access denied"), { code: "EACCES" });
+      }
+      return actual.realpath(file);
+    });
+    await expect(readMetadata(root)).rejects.toThrow("Descriptor access denied");
+    vi.mocked(filesystem.realpath).mockImplementation(actual.realpath);
   });
   it("fingerprints installed additions even in acquisition-excluded locations", async () => {
     const root = await fixture();
@@ -198,7 +256,42 @@ describe("manager sources", () => {
     );
   });
 
-  it("rejects a parent symlink swapped in at the actual file open", async () => {
+  it.each(["darwin", "win32", "linux"] as const)(
+    "rejects a same-file parent link race on %s",
+    async (platform) => {
+      const root = await fixture();
+      const source = join(root, "source");
+      const parent = join(source, "nested");
+      const outside = join(root, "outside");
+      await mkdir(parent, { recursive: true });
+      await mkdir(outside);
+      await writeFile(join(parent, "data"), "safe");
+      await link(join(parent, "data"), join(outside, "data"));
+      const filesystem = await import("node:fs/promises");
+      const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+      const originalOpen = actual.open;
+      vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      if (platform === "linux") {
+        vi.mocked(filesystem.realpath).mockImplementation(async (file) => {
+          if (String(file).startsWith("/proc/self/fd/")) {
+            throw Object.assign(new Error("No proc"), { code: "ENOENT" });
+          }
+          return actual.realpath(file);
+        });
+      }
+      vi.spyOn(filesystem, "open").mockImplementation(async (...args) => {
+        if (args[0] === join(parent, "data")) {
+          await filesystem.rename(parent, join(source, "original"));
+          await directoryLink(outside, parent);
+        }
+        return originalOpen(...args);
+      });
+      await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow();
+      await expect(readFile(join(root, "copy", "nested", "data"))).rejects.toThrow();
+      vi.mocked(filesystem.open).mockImplementation(originalOpen);
+    },
+  );
+  it("rejects a parent link swapped in after bytes are read", async () => {
     const root = await fixture();
     const source = join(root, "source");
     const parent = join(source, "nested");
@@ -206,20 +299,91 @@ describe("manager sources", () => {
     await mkdir(parent, { recursive: true });
     await mkdir(outside);
     await writeFile(join(parent, "data"), "safe");
-    await writeFile(join(outside, "data"), "EXTERNAL_SECRET");
+    await link(join(parent, "data"), join(outside, "data"));
     const filesystem = await import("node:fs/promises");
     const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
-    const originalOpen = actual.open;
-    vi.spyOn(filesystem, "open").mockImplementation(async (...args) => {
+    let blockedRename: unknown;
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.mocked(filesystem.open).mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      if (args[0] === join(parent, "data")) {
+        const originalRead = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+          const result = await originalRead(...readArgs);
+          if (result.bytesRead > 0) {
+            try {
+              await filesystem.rename(parent, join(source, "original"));
+            } catch (error) {
+              blockedRename = error;
+              throw error;
+            }
+            await directoryLink(outside, parent);
+          }
+          return result;
+        });
+      }
+      return handle;
+    });
+    const acquisition = snapshotDirectory(source, join(root, "copy"));
+    await expect(acquisition).rejects.toThrow();
+    if (blockedRename === undefined) {
+      await expect(acquisition).rejects.toThrow("parent");
+    } else {
+      expect(nativePlatform).toBe("win32");
+      expect(blockedRename).toMatchObject({
+        code: "EPERM",
+        dest: join(source, "original"),
+        path: parent,
+        syscall: "rename",
+      });
+      await expect(acquisition).rejects.toBe(blockedRename);
+      expect(await readFile(join(parent, "data"), "utf8")).toBe("safe");
+    }
+    await expect(readFile(join(root, "copy", "nested", "data"))).rejects.toThrow();
+  });
+  it("rejects a replaced real parent even when the opened file identity matches", async () => {
+    const root = await fixture();
+    const source = join(root, "source");
+    const parent = join(source, "nested");
+    const replacement = join(root, "replacement");
+    await mkdir(parent, { recursive: true });
+    await mkdir(replacement);
+    await writeFile(join(parent, "data"), "safe");
+    await link(join(parent, "data"), join(replacement, "data"));
+    const filesystem = await import("node:fs/promises");
+    const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.mocked(filesystem.open).mockImplementation(async (...args) => {
       if (args[0] === join(parent, "data")) {
         await filesystem.rename(parent, join(source, "original"));
-        await symlink(outside, parent);
+        await filesystem.rename(replacement, parent);
       }
-      return originalOpen(...args);
+      return actual.open(...args);
     });
-    await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow();
-    await expect(readFile(join(root, "copy", "nested", "data"))).rejects.toThrow();
-    vi.mocked(filesystem.open).mockImplementation(originalOpen);
+    await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow("parent changed");
+  });
+  it("canonicalises ancestor aliases for sources and new snapshot destinations", async () => {
+    const root = await fixture();
+    const source = join(root, "source");
+    const alias = join(root, "alias");
+    await mkdir(source);
+    await writeFile(join(source, "plugin.json"), manifest);
+    await directoryLink(root, alias);
+    await snapshotDirectory(join(alias, "source"), join(alias, "copy"));
+    expect(await readFile(join(root, "copy", "plugin.json"), "utf8")).toBe(manifest);
+    expect(await fingerprintDirectory(join(alias, "copy"))).toBe(
+      await fingerprintDirectory(source),
+    );
+  });
+  it("treats Windows drive-absolute sources as local rather than protocols", async () => {
+    const root = await fixture();
+    const filesystem = await import("node:fs/promises");
+    const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+    const input = String.raw`C:\plugins\sample`;
+    vi.mocked(filesystem.realpath).mockImplementation(async (file) =>
+      String(file) === pathModule.resolve(root, input) ? root : actual.realpath(file),
+    );
+    expect(await parseSource(input, { cwd: root })).toEqual({ kind: "local", path: root });
   });
   it("canonicalises local folders and never deletes them on disposal", async () => {
     const root = await fixture();
@@ -283,12 +447,14 @@ describe("manager sources", () => {
     expect(original).not.toBe(await fingerprintDirectory(source));
     await writeFile(join(destination, RECEIPT), "receipt");
     expect(await fingerprintDirectory(destination)).toBe(original);
-    await chmod(join(destination, "script"), 0o755);
-    expect(await fingerprintDirectory(destination)).not.toBe(original);
-    await chmod(join(destination, "script"), 0o744);
-    const ownerExecutable = await fingerprintDirectory(destination);
-    await chmod(join(destination, "script"), 0o754);
-    expect(await fingerprintDirectory(destination)).not.toBe(ownerExecutable);
+    if (process.platform !== "win32") {
+      await chmod(join(destination, "script"), 0o755);
+      expect(await fingerprintDirectory(destination)).not.toBe(original);
+      await chmod(join(destination, "script"), 0o744);
+      const ownerExecutable = await fingerprintDirectory(destination);
+      await chmod(join(destination, "script"), 0o754);
+      expect(await fingerprintDirectory(destination)).not.toBe(ownerExecutable);
+    }
     await chmod(join(destination, "script"), 0o644);
     await writeFile(join(destination, "script"), "different");
     expect(await fingerprintDirectory(destination)).not.toBe(original);
@@ -301,7 +467,7 @@ describe("manager sources", () => {
     const root = await fixture();
     const source = join(root, "source");
     await mkdir(source);
-    await symlink(root, join(source, "escape"));
+    await directoryLink(root, join(source, "escape"));
     await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow("Links");
     await rm(join(source, "escape"));
     await mkdir(join(source, "nested"));
@@ -309,7 +475,7 @@ describe("manager sources", () => {
     await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow("reserved receipt");
     await rm(join(source, "nested", RECEIPT));
     await mkdir(join(root, "target"));
-    await symlink(join(root, "target"), join(root, "copy"));
+    await directoryLink(join(root, "target"), join(root, "copy"));
     await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow("real directory");
   });
 
@@ -318,9 +484,10 @@ describe("manager sources", () => {
     const source = join(root, "source");
     await mkdir(source);
     await writeFile(join(root, "outside.json"), manifest);
-    await symlink(join(root, "outside.json"), join(source, "plugin.json"));
-    await expect(readMetadata(source)).rejects.toThrow();
-    await rm(join(source, "plugin.json"));
+    if (await fileLink(join(root, "outside.json"), join(source, "plugin.json"))) {
+      await expect(readMetadata(source)).rejects.toThrow();
+      await rm(join(source, "plugin.json"));
+    }
     await writeFile(join(source, "large"), Buffer.alloc(16 * 1024 * 1024 + 1));
     await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow("oversized");
   });
@@ -390,8 +557,14 @@ describe("manager sources", () => {
       join(bare, "config"),
       '[core]\n bare = true\n[filter "malicious"]\n smudge = touch SHOULD_NOT_RUN\n',
     );
-    const acquired = await acquireSource(source, join(root, "scratch"));
+    const acquired = await acquireSource(source, join(root, "scratch with ' quote"));
     expect(acquired.revision).toBe(first);
+    const privateScratch = pathModule.dirname(acquired.directory);
+    const config = join(privateScratch, "empty.config");
+    const configStat = await lstat(config);
+    expect(configStat.isFile()).toBe(true);
+    expect(await readFile(config, "utf8")).toBe("");
+    expect(await readdir(join(privateScratch, "empty-hooks"))).toEqual([]);
     expect(await readFile(join(acquired.directory, "value"), "utf8")).toBe("one");
     const metadata = await readMetadata(acquired.directory);
     expect(metadata.manifest.name).toBe("sample");
@@ -420,18 +593,19 @@ describe("manager sources", () => {
         join(root, "scratch"),
       ),
     ).rejects.toThrow("missing");
-    await symlink("value", join(repository, "plugins", "link"));
-    await runGit(repository, ["add", "."]);
-    await runGit(repository, ["commit", "-m", "link"]);
-    await runGit(repository, ["push", bare, "main"]);
-    await expect(acquireSource(source, join(root, "scratch"))).rejects.toThrow("links");
+    if (await fileLink("value", join(repository, "plugins", "link"))) {
+      await runGit(repository, ["add", "."]);
+      await runGit(repository, ["commit", "-m", "link"]);
+      await runGit(repository, ["push", bare, "main"]);
+      await expect(acquireSource(source, join(root, "scratch"))).rejects.toThrow("links");
+      await rm(join(repository, "plugins", "link"));
+    }
     await expect(
       acquireSource(
         { kind: "git", subdir: "../escape", url: pathToFileURL(bare).href },
         join(root, "scratch"),
       ),
     ).rejects.toThrow("contained");
-    await rm(join(repository, "plugins", "link"));
     await writeFile(join(repository, "plugins", RECEIPT), "malicious");
     await runGit(repository, ["add", "."]);
     await runGit(repository, ["commit", "-m", "receipt"]);
@@ -439,5 +613,5 @@ describe("manager sources", () => {
     await expect(acquireSource(source, join(root, "scratch"))).rejects.toThrow("reserved receipt");
     expect(await readFile(join(shared, "config"), "utf8")).toBe(sharedConfig);
     await expect(readFile(join(shared, "index"))).rejects.toThrow();
-  });
+  }, 30_000);
 });

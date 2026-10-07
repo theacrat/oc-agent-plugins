@@ -53,11 +53,11 @@ Agents can call the structured `agent_plugins_manage` tool when the adapter is l
 
 Use `name` for named operations, `all: true` for bulk updates and `global: true` for global scope. Git installation also accepts `ref` and `subdir`. The tool uses the invoking session's directory and returns JSON results or safe diagnostic errors.
 
-The tool asks for explicit approval through OpenCode's native question tool before every invocation, including inventory reads. A missing or denied question tool blocks the operation. The management tool's deny policy also remains enforced. There is no approval-bypass argument, vendor execution trust grant or automatic rescan. Secure management retains the same Linux requirement as the CLI.
+The tool asks for explicit approval through OpenCode's native question tool before every invocation, including inventory reads. A missing or denied question tool blocks the operation. The management tool's deny policy also remains enforced. There is no approval-bypass argument, vendor execution trust grant or automatic rescan.
 
-Package-management commands require Linux with `/proc/self/fd` available and Node 22.14 or newer. Help and version run on other platforms. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs (including `ssh://git@host/repository.git`) are supported; archives, npm packages and submodules are not installation sources.
+Package management runs on Linux, macOS and Windows with Node 22.14 or newer. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs (including `ssh://git@host/repository.git`) are supported; archives, npm packages and submodules are not installation sources.
 
-Source symlinks and special files are rejected. Reads verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against adversarial parent-directory swaps on other platforms, so secure file reads fail closed there rather than use a weaker fallback.
+Source symlinks, Windows junctions and special files are rejected. Reads check canonical containment and file identity before and after reading. Linux also checks opened descriptor paths when available. Portable Node APIs cannot guarantee containment against an untrusted process repeatedly swapping directories between checks. Source and managed directories must not be concurrently writable by untrusted processes.
 
 An interrupted mutation fails closed. `doctor` reports the adjacent `.agent-plugins-manager` state directory; the CLI does not automatically break locks or delete journals/backups. Before manual recovery, stop concurrent CLI commands, preserve that directory and inspect the journal's source, target and backup paths. Do not delete a lock just because it looks old. Disabled snapshots live in the adjacent `.agent-plugins-disabled` directory.
 

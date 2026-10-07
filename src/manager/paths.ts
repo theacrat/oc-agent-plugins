@@ -1,9 +1,54 @@
-import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import nodePath from "node:path";
 
 import type { Installation } from "./types.ts";
 
 const { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } = nodePath;
+
+type StageIdentity = Pick<Stats, "dev" | "ino" | "birthtimeMs">;
+interface StoreDiagnostics {
+  readonly installations: readonly Installation[];
+  readonly problems: readonly string[];
+}
+type StageOwner =
+  | { readonly kind: "handle"; readonly handle: FileHandle; readonly identity: StageIdentity }
+  | { readonly kind: "identity"; readonly identity: StageIdentity };
+
+function sameStageIdentity(current: StageIdentity, original: StageIdentity): boolean {
+  return (
+    current.dev === original.dev &&
+    current.ino === original.ino &&
+    current.birthtimeMs === original.birthtimeMs
+  );
+}
+
+async function openStage(stage: string, identity: StageIdentity): Promise<StageOwner> {
+  try {
+    return { handle: await open(stage, "r"), identity, kind: "handle" };
+  } catch (error) {
+    if (
+      process.platform !== "win32" ||
+      !(error instanceof Error) ||
+      !("code" in error) ||
+      !["EPERM", "EISDIR", "EACCES"].includes(String(error.code)) ||
+      !("syscall" in error) ||
+      error.syscall !== "open" ||
+      !("path" in error) ||
+      error.path !== stage
+    ) {
+      throw error;
+    }
+    return { identity, kind: "identity" };
+  }
+}
+
+async function closeStage(owner: StageOwner): Promise<void> {
+  if (owner.kind === "handle") {
+    await owner.handle.close();
+  }
+}
 
 function validateName(name: string): void {
   if (
@@ -41,6 +86,28 @@ async function safeDirectory(path: string, create = false): Promise<void> {
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`Unsafe directory (symlinks are not allowed): ${absolute}`);
   }
+}
+
+async function checkStage(stage: string, owner: StageOwner): Promise<void> {
+  await safeDirectory(dirname(stage));
+  const current = await lstat(stage);
+  if (
+    !current.isDirectory() ||
+    current.isSymbolicLink() ||
+    !sameStageIdentity(current, owner.identity) ||
+    (owner.kind === "handle" && !sameStageIdentity(await owner.handle.stat(), owner.identity))
+  ) {
+    throw new Error(`Staging directory replaced; retained for inspection: ${stage}`);
+  }
+}
+
+async function cleanupStage(stage: string, owner: StageOwner): Promise<void> {
+  if (!(await exists(stage))) {
+    return;
+  }
+  await checkStage(stage, owner);
+  // Only this exact mkdtemp directory is owned. rm unlinks nested symlinks, never their targets.
+  await rm(stage, { recursive: true });
 }
 
 function storePaths(root: string) {
@@ -127,7 +194,11 @@ async function stateInventory(state: string): Promise<Installation[]> {
 }
 
 export {
+  checkStage,
+  cleanupStage,
+  closeStage,
   exists,
+  openStage,
   safeDirectory,
   stateInventory,
   stateProblems,
@@ -136,3 +207,4 @@ export {
   validateSource,
   validateTree,
 };
+export type { StageOwner, StoreDiagnostics };

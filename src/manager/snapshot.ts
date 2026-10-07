@@ -1,8 +1,7 @@
-import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import pathModule from "node:path";
 
-import { openContainedFile } from "#src/manager/contained-read.ts";
+import { openContainedFile, verifyContainedRead } from "#src/manager/contained-read.ts";
 import { forEachSequential } from "#src/manager/sequence.ts";
 import { RECEIPT } from "#src/manager/types.ts";
 
@@ -26,7 +25,9 @@ const ignoredEntry = (name: string, rejectReceipt: boolean, rootEntry: boolean):
 };
 
 const executableBits = (mode: number): number =>
-  (Math.floor(mode / 0o100) % 2) * 0o100 + (Math.floor(mode / 0o10) % 2) * 0o10 + (mode % 2);
+  process.platform === "win32"
+    ? 0
+    : (Math.floor(mode / 0o100) % 2) * 0o100 + (Math.floor(mode / 0o10) % 2) * 0o10 + (mode % 2);
 
 const requireDirectory = async (directory: string): Promise<void> => {
   const stat = await lstat(directory);
@@ -48,12 +49,10 @@ const safeRelativePath = (path: string): boolean =>
   path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 
 const readRegularFile = async (path: string, root?: string): Promise<Buffer> => {
-  // O_NOFOLLOW is combined with read-only flags to reject a raced-in final symlink.
-  const handle =
-    root === undefined
-      ? // eslint-disable-next-line eslint/no-bitwise
-        await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-      : await openContainedFile(path, root);
+  const canonicalRoot = root ?? (await realpath(pathModule.dirname(path)));
+  const canonicalPath =
+    root === undefined ? pathModule.join(canonicalRoot, pathModule.basename(path)) : path;
+  const handle = await openContainedFile(canonicalPath, canonicalRoot);
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
@@ -73,6 +72,7 @@ const readRegularFile = async (path: string, root?: string): Promise<Buffer> => 
     if (length > stat.size) {
       throw new Error(`File changed while reading: ${path}`);
     }
+    await verifyContainedRead(handle, canonicalPath, canonicalRoot);
     return content.subarray(0, length);
   } finally {
     await handle.close();
@@ -160,38 +160,48 @@ const writeSnapshotFile = async (root: string, file: DirectoryFile): Promise<voi
     await mkdir(destination);
     return;
   }
-  const handle = await open(destination, "wx", 0o644 + file.executable);
+  const mode = 0o644 + (process.platform === "win32" ? 0 : file.executable);
+  const handle = await open(destination, "wx", mode);
   try {
     await handle.writeFile(file.content);
   } finally {
     await handle.close();
   }
-  await chmod(destination, 0o644 + file.executable);
+  await chmod(destination, mode);
 };
 
-const createDestination = async (directory: string): Promise<void> => {
+const createDestination = async (directory: string, ancestor = false): Promise<string> => {
   try {
+    if (ancestor) {
+      return await createDestination(await realpath(directory));
+    }
     const info = await lstat(directory);
-    if (!info.isDirectory() || (await realpath(directory)) !== directory) {
+    if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error("Snapshot destination must be an empty, real directory");
     }
+    return await realpath(directory);
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
       throw error;
     }
-    await createDestination(pathModule.dirname(directory));
-    await mkdir(directory);
+    const parent = await createDestination(pathModule.dirname(directory), true);
+    const destination = pathModule.join(parent, pathModule.basename(directory));
+    await mkdir(destination);
+    return destination;
   }
 };
 
 const snapshotDirectory = async (source: string, destination: string): Promise<void> => {
   const root = await realpath(source);
-  const target = pathModule.resolve(destination);
-  if (target === root || target.startsWith(`${root}${pathModule.sep}`)) {
+  const resolved = pathModule.resolve(destination);
+  if (resolved === root || resolved.startsWith(`${root}${pathModule.sep}`)) {
     throw new Error("Snapshot destination must be outside the source");
   }
   const files = await directoryFiles(root, true);
-  await createDestination(target);
+  const target = await createDestination(resolved);
+  if (target === root || target.startsWith(`${root}${pathModule.sep}`)) {
+    throw new Error("Snapshot destination must be outside the source");
+  }
   const entries = await readdir(target);
   if ((await realpath(target)) !== target || entries.length > 0) {
     throw new Error("Snapshot destination must be an empty, real directory");
