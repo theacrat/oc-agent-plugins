@@ -27,7 +27,6 @@
     "fmt:check": "oxfmt --check",
     "inspect": "bun scripts/inspect.ts",
     "lint": "oxlint",
-    "prepare": "lefthook install",
     "test": "vitest run"
   },
   "dependencies": {

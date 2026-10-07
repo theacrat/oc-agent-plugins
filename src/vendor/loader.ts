@@ -76,6 +76,15 @@ const reportUnsupported = async (
   }
 };
 
+const serverSources = (raw: JsonRecord, apps: JsonRecord, spec: FormatSpec) => ({
+  declared:
+    Object.keys(apps).length === 0
+      ? raw["mcpServers"]
+      : [raw["mcpServers"], apps].filter((entry) => entry !== undefined),
+  declaredReplacesDefaults: spec.mcpDeclaredReplaces,
+  defaults: spec.mcpDefaults,
+});
+
 const loadVendorPlugin = async (
   root: string,
   format: VendorFormat,
@@ -95,18 +104,7 @@ const loadVendorPlugin = async (
   const expandBody = format === "claude" ? placeholders.expandContent : undefined;
   const [skills, servers, commands, rules, agents, lsp] = await Promise.all([
     loadSkills(root, spec, raw, expandBody, report),
-    discoverVendorServers(
-      {
-        declared:
-          Object.keys(apps).length === 0
-            ? raw["mcpServers"]
-            : [raw["mcpServers"], apps].filter((entry) => entry !== undefined),
-        declaredReplacesDefaults: spec.mcpDeclaredReplaces,
-        defaults: spec.mcpDefaults,
-      },
-      { dataDir, placeholders, root },
-      report,
-    ),
+    discoverVendorServers(serverSources(raw, apps, spec), { dataDir, placeholders, root }, report),
     loadCommands(root, spec, raw, expandBody, report),
     loadRules(root, spec, raw, report),
     loadAgents(root, spec, raw, expandBody, report),
