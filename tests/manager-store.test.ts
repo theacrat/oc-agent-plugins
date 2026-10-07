@@ -91,6 +91,49 @@ afterEach(async () => {
 });
 
 describe("manager store", () => {
+  it.each(["payload", "receipt"] as const)(
+    "retains validated stage %s edits after a staged-boundary failure",
+    async (change) => {
+      await install(root, source, deps);
+      const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+      let stage: string | undefined;
+      await expect(
+        update(root, "demo", source, {
+          ...deps,
+          boundary: async (boundary) => {
+            if (boundary !== "staged") {
+              return;
+            }
+            const entries = await readdir(state);
+            const name = entries.find((entry) => entry.startsWith("stage-"));
+            if (!name) {
+              throw new Error("Missing test stage");
+            }
+            stage = join(state, name);
+            const filename = change === "payload" ? "external-user-work.txt" : RECEIPT;
+            await writeFile(
+              join(stage, filename),
+              change === "payload" ? "preserve" : "externally modified receipt",
+            );
+            throw new Error("injected staged failure");
+          },
+        }),
+      ).rejects.toThrow();
+      if (!stage) {
+        throw new Error("Missing test stage");
+      }
+      const userFile = join(stage, change === "payload" ? "external-user-work.txt" : RECEIPT);
+      expect(await readFile(userFile, "utf8")).toBe(
+        change === "payload" ? "preserve" : "externally modified receipt",
+      );
+      expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("first");
+      const diagnostics = await doctor(root, deps);
+      expect(diagnostics.problems).toContain(
+        `Retained transaction snapshot: ${nodePath.basename(stage)}`,
+      );
+    },
+  );
+
   it("cleans identity-changing update stages and preserves the previous installation", async () => {
     await install(root, source, deps);
     await writeFile(

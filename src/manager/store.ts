@@ -27,13 +27,9 @@ interface StoreDependencies {
   readonly boundary?: Parameters<typeof transact>[0]["boundary"];
 }
 
-async function assessSnapshot(
-  directory: string,
-  deps: StoreDependencies,
-  metadata?: PluginMetadata,
-) {
+async function assessSnapshot(directory: string, deps: StoreDependencies) {
   const receipt = await readReceipt(directory);
-  const resolved = metadata ?? (await deps.readMetadata(directory));
+  const resolved = await deps.readMetadata(directory);
   if (
     resolved?.manifest.name !== receipt.name ||
     resolved.format !== receipt.format ||
@@ -51,16 +47,15 @@ async function inspect(
   enabled: boolean,
   deps: StoreDependencies,
 ): Promise<Installation> {
-  const name = basename(directory);
-  const installation = { directory, enabled, name };
+  const installation = { directory, enabled, name: basename(directory) };
   try {
     await safeDirectory(directory);
-    const metadata = await deps.readMetadata(directory);
     if (!(await exists(join(directory, RECEIPT)))) {
+      const metadata = await deps.readMetadata(directory);
       return { ...installation, managed: false, ...(metadata ? { metadata } : {}) };
     }
-    const { edited, ...snapshot } = await assessSnapshot(directory, deps, metadata);
-    if (snapshot.receipt.name !== name) {
+    const { edited, ...snapshot } = await assessSnapshot(directory, deps);
+    if (snapshot.receipt.name !== installation.name) {
       throw new Error("Receipt and manifest identity do not match");
     }
     return {
@@ -77,12 +72,9 @@ async function inspect(
 
 async function listInstallations(root: string, deps: StoreDependencies): Promise<Installation[]> {
   const roots = storePaths(root);
-  const locations = [
-    [roots.active, true],
-    [roots.disabled, false],
-  ] as const;
+  const locations = [roots.active, roots.disabled];
   const groups = await Promise.all(
-    locations.map(async ([directory, enabled]) => {
+    locations.map(async (directory) => {
       if (!(await exists(directory))) {
         return [];
       }
@@ -91,7 +83,9 @@ async function listInstallations(root: string, deps: StoreDependencies): Promise
       return Promise.all(
         entries
           .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-          .map(async (entry) => inspect(join(directory, entry.name), enabled, deps)),
+          .map(async (entry) =>
+            inspect(join(directory, entry.name), directory === roots.active, deps),
+          ),
       );
     }),
   );
@@ -151,10 +145,8 @@ async function stagedReceipt(
     throw new Error("Source has no supported plugin manifest");
   }
   validateName(metadata.manifest.name);
-  if (
-    previous &&
-    (previous.name !== metadata.manifest.name || previous.format !== metadata.format)
-  ) {
+  const identity = previous ?? { format: metadata.format, name: metadata.manifest.name };
+  if (identity.name !== metadata.manifest.name || identity.format !== metadata.format) {
     throw new Error("Update cannot change plugin name or format");
   }
   const receipt: Receipt = {
@@ -195,19 +187,29 @@ async function stageSource(
   deps: StoreDependencies,
   previous?: Receipt,
 ) {
-  const paths = storePaths(root);
-  await validateSource(acquired.directory, [paths.active, paths.disabled, paths.state]);
-  const stage = await mkdtemp(join(paths.state, "stage-"));
+  const { state } = storePaths(root);
+  await validateSource(acquired.directory, Object.values(storePaths(root)));
+  const stage = await mkdtemp(join(state, "stage-"));
   const handle = await open(stage, "r");
+  let receipt: Receipt | undefined;
   try {
     await deps.snapshotDirectory(acquired.directory, stage);
     await checkStage(stage, handle);
-    const receipt = await stagedReceipt(stage, acquired, deps, previous);
+    receipt = await stagedReceipt(stage, acquired, deps, previous);
     await deps.boundary?.("staged");
     await checkStage(stage, handle);
     return { receipt, stage };
   } catch (error) {
-    if (!(await exists(join(paths.state, "journal.json")))) {
+    if (!(await exists(join(state, "journal.json")))) {
+      if (receipt) {
+        const snapshot = await assessSnapshot(stage, deps);
+        assertUpdateReceipt(snapshot.receipt, receipt.source, receipt);
+        if (snapshot.edited) {
+          throw new Error(`Edited staging snapshot retained for inspection: ${stage}`, {
+            cause: error,
+          });
+        }
+      }
       await cleanupStage(stage, handle);
     }
     throw error;
@@ -218,11 +220,11 @@ async function stageSource(
 
 async function install(root: string, acquired: AcquiredSource, deps: StoreDependencies) {
   return withLock(root, async () => {
-    const paths = storePaths(root);
     const { stage, receipt } = await stageSource(root, acquired, deps);
-    const target = join(paths.active, receipt.name);
+    const { active, disabled, state } = storePaths(root);
+    const target = join(active, receipt.name);
     try {
-      if ((await exists(target)) || (await exists(join(paths.disabled, receipt.name)))) {
+      if ((await exists(target)) || (await exists(join(disabled, receipt.name)))) {
         throw new Error(`Installation already exists: ${receipt.name}`);
       }
       await transact({
@@ -232,7 +234,7 @@ async function install(root: string, acquired: AcquiredSource, deps: StoreDepend
         target,
       });
     } catch (error) {
-      if (!(await exists(join(paths.state, "journal.json"))) && (await exists(stage))) {
+      if (!(await exists(join(state, "journal.json"))) && (await exists(stage))) {
         await destroy(stage, deps);
       }
       throw error;
@@ -293,10 +295,10 @@ async function removeInstallation(root: string, name: string, deps: StoreDepende
   });
 }
 
-type StoreDiagnostics = Readonly<{
-  installations: readonly Installation[];
-  problems: readonly string[];
-}>;
+interface StoreDiagnostics {
+  readonly installations: readonly Installation[];
+  readonly problems: readonly string[];
+}
 
 async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagnostics> {
   const installations = await listInstallations(root, deps);
@@ -308,13 +310,11 @@ async function doctor(root: string, deps: StoreDependencies): Promise<StoreDiagn
       ? entry.problem.split("\n")
       : [`${entry.name}: ${entry.problem}`];
   });
-  const names = new Set<string>();
+  const duplicateNames = installations
+    .map((entry) => entry.name)
+    .filter((name, index, names) => names.indexOf(name) !== index);
   problems.push(
-    ...installations.flatMap((entry) => {
-      const duplicate = names.has(entry.name);
-      names.add(entry.name);
-      return duplicate ? [`Conflicting active/disabled installation: ${entry.name}`] : [];
-    }),
+    ...duplicateNames.map((name) => `Conflicting active/disabled installation: ${name}`),
   );
   return { installations, problems };
 }
