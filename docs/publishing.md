@@ -22,4 +22,4 @@ Update `package.json` and `bun.lock`, pass CI on `main`, then create a GitHub re
 
 The verify job checks tag/version consistency and main ancestry, runs the full test suite with the pinned Cloudflare fixture, packs the package, and imports that tarball in a production-only installation. Only then may the environment-approved publish job publish the exact verified artifact. Dependency installation and testing run without permission to mint an OIDC credential.
 
-There is no compilation step because OpenCode loads the shipped TypeScript entrypoint. Pull requests never trigger npm publication. Actions are pinned to commit SHAs, cache is disabled in the publishing job, and checkout does not persist Git credentials.
+OpenCode loads the shipped TypeScript plugin entrypoint. The `prepack` script separately builds a bundled Node CLI in `dist/cli.js`; the release verification also runs its help/version commands under Node. Pull requests never trigger npm publication. Actions are pinned to commit SHAs, cache is disabled in the publishing job, and checkout does not persist Git credentials.

@@ -49,6 +49,8 @@ jobs:
           cd packed/package
           bun install --production --ignore-scripts
           bun -e 'import plugin from "./index.ts"; if (plugin.id !== "agent-plugins") throw new Error("Invalid plugin entrypoint")'
+          node dist/cli.js --version
+          node dist/cli.js --help
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: npm-package

@@ -4,6 +4,38 @@ An OpenCode v2 plugin that loads [Agent Plugins](https://agent-plugins.org/) 1.0
 
 ## Install
 
+### Manage vendor packages with npx
+
+The package includes the `oc-agent-plugins` CLI. It runs on Node without requiring Bun and installs vendor packages into the directories this adapter discovers.
+
+```sh
+npx oc-agent-plugins install cloudflare/skills
+npx oc-agent-plugins install ./my-plugin --global
+npx oc-agent-plugins install https://github.com/acme/plugins.git --ref main --subdir plugins/review
+npx oc-agent-plugins list
+npx oc-agent-plugins info cloudflare
+npx oc-agent-plugins update cloudflare
+npx oc-agent-plugins update --all
+npx oc-agent-plugins disable cloudflare
+npx oc-agent-plugins enable cloudflare
+npx oc-agent-plugins uninstall cloudflare
+npx oc-agent-plugins doctor
+```
+
+Project scope is the default, using the current directory's `.opencode/agent-plugins/`. Use `--project /path/to/project` for an explicit project or `--global` for OpenCode's global vendor directory. `OPENCODE_CONFIG_DIR` and the XDG/home fallback are respected. `--json` gives machine-readable results.
+
+Successful JSON results are written to stdout. Failures write a JSON error object to stderr and exit with status 1. `update --all` runs serially and stops on the first failure; earlier successful updates are retained.
+
+Installations are copied snapshots with ownership receipts and content fingerprints. Updates refresh the recorded local source or Git ref. Edited or unmanaged packages are never overwritten; a plugin's persistent runtime data is retained on uninstall. Disable/enable keeps a managed package outside/inside discovery without changing OpenCode settings.
+
+The CLI does not start OpenCode, connect MCP servers, execute package scripts or grant hooks/monitor trust. You still need to load the OpenCode adapter separately and configure trust explicitly when needed. After changing installations, run `/agent-plugins` in OpenCode to rescan.
+
+Node 22.14 or newer is required. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs are supported; archives, npm packages and submodules are not installation sources.
+
+Source symlinks and special files are rejected. On Linux, reads also verify the opened file descriptor stays inside the source root. Portable Node APIs cannot provide the same guarantee against an adversarial process repeatedly swapping parent directories on other platforms; do not install or update local folders that an untrusted process can concurrently modify.
+
+An interrupted mutation fails closed. `doctor` reports the adjacent `.agent-plugins-manager` state directory; the CLI does not automatically break locks or delete journals/backups. Before manual recovery, stop concurrent CLI commands, preserve that directory and inspect the journal's source, target and backup paths. Do not delete a lock just because it looks old. Disabled snapshots live in the adjacent `.agent-plugins-disabled` directory.
+
 Once published on npm, add `oc-agent-plugins` to OpenCode's `plugins` array. The public source is [theacrat/oc-agent-plugins](https://github.com/theacrat/oc-agent-plugins).
 
 For a local checkout, point `plugins` in `opencode.json(c)` at this directory. It has to be the directory, not `index.ts`, because OpenCode only accepts a directory as a local plugin path.

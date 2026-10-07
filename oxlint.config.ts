@@ -40,6 +40,15 @@ export default defineConfig({
       },
     },
     {
+      // The Node CLI boundary reads process argv/environment; inner modules receive explicit inputs.
+      files: ["src/cli.ts"],
+      rules: {
+        "node/no-process-env": "off",
+        // The ESM executable is never require()d; top-level await is its lifecycle boundary.
+        "node/no-top-level-await": "off",
+      },
+    },
+    {
       // Bun CLI entrypoints are never require()d; conflicts with unicorn/prefer-top-level-await.
       files: ["scripts/**/*"],
       rules: {
@@ -133,6 +142,8 @@ export default defineConfig({
           "node:path",
           "node:readline",
           "node:url",
+          "node:util",
+          "node:crypto",
         ],
       },
     ],
