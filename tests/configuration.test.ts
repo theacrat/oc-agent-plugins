@@ -12,6 +12,104 @@ const field = (extra: Record<string, unknown> = {}) => ({
 const secret = "private-token-123";
 
 describe("declared configuration", () => {
+  it("rejects implicit type coercion and malformed runtime options", () => {
+    for (const type of [["directory"], ["file"], 1, undefined]) {
+      expect(() =>
+        resolveConfiguration({
+          env: {},
+          format: "claude",
+          manifest: { userConfig: { value: field({ type }) } },
+        }),
+      ).toThrow("unsupported userConfig type");
+    }
+    expect(() =>
+      resolveConfiguration({
+        env: {},
+        format: "claude",
+        manifest: {},
+        // @ts-expect-error Runtime options originate outside TypeScript.
+        options: { userConfig: "bad" },
+      }),
+    ).toThrow("must be an object");
+    expect(() =>
+      resolveConfiguration({
+        env: {},
+        format: "cursor",
+        manifest: {},
+        // @ts-expect-error A string must not be accepted as a list of public variable names.
+        options: { publicVariables: "TOKEN" },
+      }),
+    ).toThrow("array of names");
+    expect(() =>
+      resolveConfiguration({
+        env: {},
+        format: "cursor",
+        manifest: {},
+        // @ts-expect-error Aliases are validated at the runtime options boundary.
+        options: { modelAliases: { sonnet: 123 } },
+      }),
+    ).toThrow("map names to strings");
+  });
+
+  it("keeps nested secrets private and rejects public overlap without exposing diagnostics", () => {
+    const input = {
+      env: { TOKEN: JSON.stringify({ token: secret }) },
+      format: "cursor" as const,
+      manifest: {
+        variables: {
+          properties: {
+            PRIVATE: {
+              properties: { token: { type: "string" } },
+              required: ["token"],
+              type: "object",
+            },
+            PUBLIC: { type: "string" },
+          },
+          type: "object",
+        },
+      },
+      options: { publicVariables: ["PUBLIC"], variables: { PRIVATE: { env: "TOKEN" } } },
+    };
+    const config = resolveConfiguration(input);
+    expect(config.values).toEqual({});
+    expect(JSON.stringify(config)).not.toContain(secret);
+    expect(() => config.expandContent(secret)).toThrow("forbidden");
+    expect(() => config.expandContent(`\${PRIVATE}`)).toThrow("forbidden");
+    expect(() =>
+      resolveConfiguration({
+        ...input,
+        options: { ...input.options, variables: { ...input.options.variables, PUBLIC: secret } },
+      }),
+    ).toThrow("overlaps a sensitive value");
+  });
+
+  it("captures schema sensitivity before later manifest mutation", () => {
+    const token = { ...field(), sensitive: true };
+    const input = {
+      env: { TOKEN: secret },
+      format: "claude" as const,
+      manifest: { userConfig: { token } },
+      options: { userConfig: { token: { env: "TOKEN" } } },
+    };
+    const config = resolveConfiguration(input);
+    token.sensitive = false;
+    expect(() => config.expandContent(`\${user_config.token}`)).toThrow("forbidden");
+    expect(config.expand(`\${user_config.token}`)).toBe(secret);
+  });
+
+  it("does not let mutable public snapshots change transport configuration", () => {
+    const config = resolveConfiguration({
+      env: {},
+      format: "claude",
+      manifest: { userConfig: { tags: field({ default: ["one"], multiple: true }) } },
+    });
+    const { tags } = config.values;
+    if (Array.isArray(tags)) {
+      tags.push("changed");
+    }
+    expect(config.expand(`\${user_config.tags}`)).toBe('["one"]');
+  });
+
   it("validates defaults, supplied typed values, options and required fields", () => {
     const config = resolveConfiguration({
       env: {},

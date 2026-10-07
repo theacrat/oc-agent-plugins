@@ -36,6 +36,17 @@ const NAMES: Readonly<
 const PLACEHOLDER =
   /\$\{(?<name>(?:user_config\.)?[A-Za-z_][A-Za-z0-9_]*)(?::-(?<fallback>[^}]*))?\}/gu;
 
+// Substitutions are never rescanned, including text returned by configuration expansion.
+const substitute = (value: string, resolve: (match: RegExpExecArray) => string): string => {
+  let output = "";
+  let last = 0;
+  for (const match of value.matchAll(PLACEHOLDER)) {
+    output += value.slice(last, match.index) + resolve(match);
+    last = match.index + match[0].length;
+  }
+  return output + value.slice(last);
+};
+
 const placeholdersFor = (format: VendorFormat, input: PlaceholderInput): Placeholders => {
   const names = NAMES[format];
   const known = new Map<string, string>([
@@ -59,21 +70,9 @@ const placeholdersFor = (format: VendorFormat, input: PlaceholderInput): Placeho
     }
     return input.env[name] ?? match.groups?.["fallback"] ?? match[0];
   };
-  // Built from matchAll so substituted text is never rescanned for placeholders.
-  const expand = (value: string) => {
-    let output = "";
-    let last = 0;
-    for (const match of value.matchAll(PLACEHOLDER)) {
-      output += value.slice(last, match.index) + resolve(match);
-      last = match.index + match[0].length;
-    }
-    return output + value.slice(last);
-  };
   // Markdown bodies only get the plugin paths, never process environment values, which could be secrets.
   const expandContent = (value: string, extra: Readonly<Record<string, string>> = {}) => {
-    let output = "";
-    let last = 0;
-    for (const match of value.matchAll(PLACEHOLDER)) {
+    const result = substitute(value, (match) => {
       const name = match.groups?.["name"] ?? "";
       const configured = input.configuration?.expandContent(match[0]);
       const replacement =
@@ -81,17 +80,15 @@ const placeholdersFor = (format: VendorFormat, input: PlaceholderInput): Placeho
           ? configured
           : (extra[name] ?? known.get(name));
       if (replacement === undefined || match.groups?.["fallback"] !== undefined) {
-        continue;
+        return match[0];
       }
-      output += value.slice(last, match.index) + replacement;
-      last = match.index + match[0].length;
-    }
-    const result = output + value.slice(last);
+      return replacement;
+    });
     input.configuration?.assertContent(result);
     return result;
   };
   return {
-    expand,
+    expand: (value) => substitute(value, resolve),
     expandContent,
     expandRemote: format === "claude" || (format === "cursor" && input.configuration !== undefined),
     processEnv: Object.fromEntries(known),

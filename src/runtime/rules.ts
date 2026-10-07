@@ -44,6 +44,35 @@ const filesForTool = (tool: string, input: unknown): string[] => {
   );
 };
 
+const trackFiles = (
+  files: Map<string, Set<string>>,
+  sessionID: string,
+  directory: string,
+  paths: readonly string[],
+): void => {
+  if (paths.length === 0) {
+    return;
+  }
+  const active = files.get(sessionID) ?? new Set<string>();
+  for (const file of paths) {
+    const absolute = path.resolve(directory, file);
+    if (isWithin(directory, absolute)) {
+      active.add(absolute);
+    }
+  }
+  files.set(sessionID, active);
+};
+
+const activeRules = (
+  rules: readonly PluginRule[],
+  files: ReadonlySet<string> | undefined,
+  directory: string,
+): readonly PluginRule[] =>
+  rules.filter(
+    (rule) =>
+      rule.alwaysApply || [...(files ?? [])].some((file) => ruleMatchesFile(rule, file, directory)),
+  );
+
 const registerScopedRules = async (
   ctx: Pick<Plugin.Context, "tool" | "session">,
   directory: string,
@@ -56,18 +85,7 @@ const registerScopedRules = async (
     if (disposed) {
       return;
     }
-    const paths = filesForTool(event.tool, event.input);
-    if (paths.length === 0) {
-      return;
-    }
-    const active = files.get(event.sessionID) ?? new Set<string>();
-    for (const file of paths) {
-      const absolute = path.resolve(directory, file);
-      if (isWithin(directory, absolute)) {
-        active.add(absolute);
-      }
-    }
-    files.set(event.sessionID, active);
+    trackFiles(files, event.sessionID, directory, filesForTool(event.tool, event.input));
   });
   let context;
   try {
@@ -75,14 +93,8 @@ const registerScopedRules = async (
       if (disposed) {
         return;
       }
-      const active = files.get(event.sessionID) ?? new Set<string>();
-      for (const rule of rules) {
-        if (
-          rule.alwaysApply ||
-          [...active].some((file) => ruleMatchesFile(rule, file, directory))
-        ) {
-          event.system.push({ text: rule.content, type: "text" });
-        }
+      for (const rule of activeRules(rules, files.get(event.sessionID), directory)) {
+        event.system.push({ text: rule.content, type: "text" });
       }
     });
   } catch (error) {
