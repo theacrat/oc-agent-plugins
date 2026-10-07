@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseOptions } from "#src/options.ts";
 import type { registerCompatibility } from "#src/runtime/compatibility.ts";
 import { managerArguments } from "#src/runtime/manager-arguments.ts";
+import { safeNativeError } from "#src/runtime/manager-errors.ts";
 import { registerCommands } from "#src/runtime/plugin-commands.ts";
 import type { Report } from "#src/types.ts";
 
@@ -168,8 +169,11 @@ describe("native manager command", () => {
     });
     await writeFile(path.join(project, ".opencode/agent-plugins/demo/README.md"), "User edit");
     expect(JSON.parse(await command.invoke("uninstall demo --json"))).toMatchObject({
+      error:
+        "Installation has local edits or is unmanaged. Preserve local work and inspect it before retrying; retained staging data must not be deleted blindly.",
       exitCode: 1,
     });
+    expect(await command.invoke("doctor")).toContain("Exit status: 1");
     expect(
       await readFile(path.join(project, ".opencode/agent-plugins/demo/README.md"), "utf8"),
     ).toBe("User edit");
@@ -201,6 +205,7 @@ describe("native manager command", () => {
       await readFile(path.join(project, ".opencode/agent-plugins/demo/plugin.json"), "utf8"),
     ).toBe(manifest());
     expect(JSON.parse(await command.invoke("list --global --project nope --json"))).toMatchObject({
+      error: "Use --global or --project, not both",
       exitCode: 1,
     });
     expect(JSON.parse(await command.invoke("install --ref bad --subdir bad --json"))).toMatchObject(
@@ -212,16 +217,70 @@ describe("native manager command", () => {
     const command = await registered(await temporary());
     const secret = "credential-do-not-echo";
     const malformed = await command.invoke(`install "${secret} --json`);
-    expect(malformed).toContain("Manager command failed");
+    expect(JSON.parse(malformed)).toEqual({
+      error:
+        "Unterminated quote or trailing escape. Run /agent-plugins-manage --help to check usage.",
+      exitCode: 1,
+    });
     expect(malformed).not.toContain(secret);
-    expect(malformed).not.toContain('"exitCode"');
     const rejected = await command.invoke(`"--json" "${secret}"`);
     expect(JSON.parse(rejected)).toEqual({
-      error: "Manager command failed; check arguments and package state",
+      error: "Unknown command. Run /agent-plugins-manage --help to check usage.",
       exitCode: 1,
     });
     expect(rejected).not.toContain(secret);
     command.get.mockRejectedValueOnce(new Error(secret));
-    expect(await command.invoke("list --json")).not.toContain(secret);
+    const sdkFailure = await command.invoke("list --json");
+    expect(sdkFailure).not.toContain(secret);
+    expect(JSON.parse(sdkFailure)).toMatchObject({
+      error: "Unable to read the invoking session location. Retry when the session is available.",
+      exitCode: 1,
+    });
+    expect(JSON.parse(await command.invoke("info absent --json"))).toEqual({
+      error: 'Plugin "absent" is not installed in this scope',
+      exitCode: 1,
+    });
+    expect(JSON.parse(await command.invoke("list --no-such-option --json"))).toMatchObject({
+      error: "Unknown option. Run /agent-plugins-manage --help to check supported flags.",
+      exitCode: 1,
+    });
+    const sourceFailure = await command.invoke(
+      `install "https://user:${secret}@example.com/source" --json`,
+    );
+    expect(sourceFailure).not.toContain(secret);
+    expect(sourceFailure).not.toContain("example.com");
+    expect(JSON.parse(sourceFailure)).toMatchObject({
+      error:
+        "Unsafe source or installation path. Use real, contained directories without symlinks or reserved paths.",
+      exitCode: 1,
+    });
+  });
+});
+
+describe("safe native error presentation", () => {
+  it.each([
+    ["Store is locked: /secret/state", "Store is locked"],
+    ["Rollback collision; transaction journal retained", "retained journal"],
+    ["Interrupted transaction detected; inspect journal.json", "retained journal"],
+    ["Edited staging snapshot retained for inspection: /secret/stage", "local edits"],
+    ["Unsafe payload entry: https://user:secret@example.com/path", "Unsafe source"],
+    ["Missing or conflicting installation: absent", "missing, conflicting"],
+    ["--ref and --subdir require a Git source", "require a Git source"],
+  ])("provides actionable fixed text for %s", (message, diagnostic) => {
+    const output = safeNativeError(new Error(message));
+    expect(output).toContain(diagnostic);
+    expect(output).not.toContain("secret");
+    expect(output).not.toContain("example.com");
+  });
+  it("never echoes unrecognised errors or invalid captured plugin names", () => {
+    for (const error of [
+      new Error("SDK body secret"),
+      new Error('Plugin "https://user:secret@example.com" is not installed in this scope'),
+      { message: "secret" },
+    ]) {
+      expect(safeNativeError(error)).toBe(
+        "Manager command failed. Run /agent-plugins-manage --help to check usage.",
+      );
+    }
   });
 });
