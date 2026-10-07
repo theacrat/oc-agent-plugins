@@ -17,6 +17,54 @@ const isMonitorWhen = (value: unknown): value is PluginMonitor["when"] =>
   typeof value === "string" &&
   (value === "always" || /^on-skill-invoke:[A-Za-z0-9._-]+$/u.test(value));
 
+const parseMonitor = (
+  entry: unknown,
+  source: string,
+  report: Report,
+): PluginMonitor | undefined => {
+  if (
+    !isRecord(entry) ||
+    Object.keys(entry).some((key) => !["name", "command", "description", "when"].includes(key)) ||
+    ![entry["name"], entry["command"], entry["description"]].every(
+      (field) => typeof field === "string" && field.trim() !== "",
+    ) ||
+    typeof entry["name"] !== "string" ||
+    typeof entry["command"] !== "string" ||
+    typeof entry["description"] !== "string"
+  ) {
+    report({
+      message:
+        "monitor requires name, command and description strings; unknown fields are rejected",
+      severity: "error",
+      source,
+    });
+    return undefined;
+  }
+  const when = entry["when"] ?? "always";
+  if (!isMonitorWhen(when)) {
+    report({
+      message: `monitor ${entry["name"]} has an unsupported start condition`,
+      severity: "error",
+      source,
+    });
+    return undefined;
+  }
+  if (entry["command"].includes("${user_config.")) {
+    report({
+      message: `monitor ${entry["name"]} cannot substitute user_config into a shell command`,
+      severity: "error",
+      source,
+    });
+    return undefined;
+  }
+  return {
+    command: entry["command"],
+    description: entry["description"],
+    name: entry["name"],
+    when,
+  };
+};
+
 const parseMonitors = (value: unknown, source: string, report: Report): PluginMonitor[] => {
   if (!Array.isArray(value)) {
     report({ message: "monitors must be an array", severity: "error", source });
@@ -25,52 +73,16 @@ const parseMonitors = (value: unknown, source: string, report: Report): PluginMo
   const monitors: PluginMonitor[] = [];
   const names = new Set<string>();
   for (const entry of value) {
-    if (
-      !isRecord(entry) ||
-      Object.keys(entry).some((key) => !["name", "command", "description", "when"].includes(key)) ||
-      ![entry["name"], entry["command"], entry["description"]].every(
-        (field) => typeof field === "string" && field.trim() !== "",
-      ) ||
-      typeof entry["name"] !== "string" ||
-      typeof entry["command"] !== "string" ||
-      typeof entry["description"] !== "string"
-    ) {
-      report({
-        message:
-          "monitor requires name, command and description strings; unknown fields are rejected",
-        severity: "error",
-        source,
-      });
+    const monitor = parseMonitor(entry, source, report);
+    if (monitor === undefined) {
       continue;
     }
-    const when = entry["when"] ?? "always";
-    if (!isMonitorWhen(when)) {
-      report({
-        message: `monitor ${entry["name"]} has an unsupported start condition`,
-        severity: "error",
-        source,
-      });
+    if (names.has(monitor.name)) {
+      report({ message: `duplicate monitor name ${monitor.name}`, severity: "error", source });
       continue;
     }
-    if (entry["command"].includes("${user_config.")) {
-      report({
-        message: `monitor ${entry["name"]} cannot substitute user_config into a shell command`,
-        severity: "error",
-        source,
-      });
-      continue;
-    }
-    if (names.has(entry["name"])) {
-      report({ message: `duplicate monitor name ${entry["name"]}`, severity: "error", source });
-      continue;
-    }
-    names.add(entry["name"]);
-    monitors.push({
-      command: entry["command"],
-      description: entry["description"],
-      name: entry["name"],
-      when,
-    });
+    names.add(monitor.name);
+    monitors.push(monitor);
   }
   return monitors;
 };

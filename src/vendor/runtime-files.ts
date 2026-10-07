@@ -9,6 +9,29 @@ interface RuntimeFile {
   readonly text: string;
 }
 
+const readRuntimeFile = async (
+  root: string,
+  candidate: string,
+  directory: string,
+  report: Report,
+): Promise<RuntimeFile | undefined> => {
+  const contained = await resolveWithin(root, candidate);
+  if (contained.kind !== "file") {
+    report({
+      message: `${directory} file is ${contained.kind}`,
+      severity: "error",
+      source: candidate,
+    });
+    return undefined;
+  }
+  const read = await readText(contained.path);
+  if (!read.ok) {
+    report({ message: read.error, severity: "error", source: candidate });
+    return undefined;
+  }
+  return { path: contained.path, text: read.text };
+};
+
 const loadRuntimeFiles = async (
   root: string,
   declared: unknown,
@@ -44,23 +67,7 @@ const loadRuntimeFiles = async (
     [...new Set(groups.flat())]
       .filter((candidate) => candidate.endsWith(extension))
       .toSorted()
-      .map(async (candidate): Promise<RuntimeFile | undefined> => {
-        const contained = await resolveWithin(root, candidate);
-        if (contained.kind !== "file") {
-          report({
-            message: `${directory} file is ${contained.kind}`,
-            severity: "error",
-            source: candidate,
-          });
-          return undefined;
-        }
-        const read = await readText(contained.path);
-        if (!read.ok) {
-          report({ message: read.error, severity: "error", source: candidate });
-          return undefined;
-        }
-        return { path: contained.path, text: read.text };
-      }),
+      .map(async (candidate) => readRuntimeFile(root, candidate, directory, report)),
   );
   return [
     ...new Map(

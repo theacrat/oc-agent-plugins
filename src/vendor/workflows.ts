@@ -14,22 +14,7 @@ interface PluginWorkflow {
   readonly body: string;
 }
 
-// Only a literal metadata subset is accepted. Discovery never imports or evaluates a script.
-const parseWorkflow = (
-  source: string,
-  file: string,
-  report: Report,
-): PluginWorkflow | undefined => {
-  const match = /^\s*export\s+const\s+meta\s*=\s*(?<meta>\{[\s\S]*?\})\s*;?/u.exec(source);
-  const literal = match?.groups?.["meta"];
-  if (match === null || literal === undefined) {
-    report({
-      message: "workflow must begin with export const meta and a literal metadata object",
-      severity: "error",
-      source: file,
-    });
-    return undefined;
-  }
+const parseWorkflowMeta = (literal: string, file: string, report: Report) => {
   // Restrict tokens before YAML parsing so executable JS, tags and aliases cannot become metadata.
   const tokens = literal.match(
     /'(?:[^'\\]|\\['\\])*'|"(?:[^"\\]|\\["\\])*"|[A-Za-z_][A-Za-z_0-9]*|[{}[\],:]|\s+/gu,
@@ -46,16 +31,15 @@ const parseWorkflow = (
       severity: "error",
       source: file,
     });
-    return undefined;
+    return;
   }
   const document = parseDocument(literal, { schema: "failsafe", uniqueKeys: true });
   if (document.errors.length > 0) {
     report({ message: "invalid literal workflow metadata", severity: "error", source: file });
-    return undefined;
+    return;
   }
   const meta: unknown = document.toJS({ maxAliasCount: 0 });
   if (
-    document.errors.length > 0 ||
     !isRecord(meta) ||
     Object.keys(meta).some((key) => !["name", "description", "phases"].includes(key)) ||
     typeof meta["name"] !== "string" ||
@@ -65,16 +49,35 @@ const parseWorkflow = (
     (meta["phases"] !== undefined && !isStringArray(meta["phases"]))
   ) {
     report({ message: "invalid literal workflow metadata", severity: "error", source: file });
-    return undefined;
+    return;
   }
   return {
-    body: source.slice(match[0].length),
     description: meta["description"],
     name: meta["name"],
-    path: file,
     phases: isStringArray(meta["phases"]) ? meta["phases"] : [],
-    source,
   };
+};
+
+// Only a literal metadata subset is accepted. Discovery never imports or evaluates a script.
+const parseWorkflow = (
+  source: string,
+  file: string,
+  report: Report,
+): PluginWorkflow | undefined => {
+  const match = /^\s*export\s+const\s+meta\s*=\s*(?<meta>\{[\s\S]*?\})\s*;?/u.exec(source);
+  const literal = match?.groups?.["meta"];
+  if (match === null || literal === undefined) {
+    report({
+      message: "workflow must begin with export const meta and a literal metadata object",
+      severity: "error",
+      source: file,
+    });
+    return undefined;
+  }
+  const meta = parseWorkflowMeta(literal, file, report);
+  return meta === undefined
+    ? undefined
+    : { ...meta, body: source.slice(match[0].length), path: file, source };
 };
 
 const loadWorkflows = async (

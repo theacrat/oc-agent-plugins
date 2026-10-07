@@ -1,7 +1,4 @@
-import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-
-import { errorMessage, isRecord } from "#src/json.ts";
+import { MonitorProcess } from "#src/runtime/monitor-process.ts";
 import type { Report } from "#src/types.ts";
 import type { PluginMonitor } from "#src/vendor/monitors.ts";
 
@@ -20,10 +17,11 @@ interface MonitorOptions {
   readonly notify: (sessionId: string, monitor: string, output: string) => void;
 }
 
-interface RunningMonitor {
-  readonly child: ChildProcess;
-  readonly done: Promise<void>;
-  stop: () => void;
+interface MonitorLimits {
+  readonly output: number;
+  readonly processes: number;
+  readonly runtime: number;
+  readonly grace: number;
 }
 
 const positive = (value: number | undefined, fallback: number) => {
@@ -34,175 +32,131 @@ const positive = (value: number | undefined, fallback: number) => {
   return result;
 };
 
-const registerMonitors = (monitors: readonly PluginMonitor[], options: MonitorOptions) => {
-  const maxOutput = positive(options.maxOutputBytes, 64 * 1024);
-  const maxProcesses = positive(options.maxProcesses, 8);
-  const maxRuntime = positive(options.maxRuntimeMs, 24 * 60 * 60 * 1000);
-  const grace = positive(options.stopGraceMs, 500);
-  if (monitors.length > 0 && options.enabled !== false && options.trusted !== true) {
-    options.report({
-      message: "Monitor commands discovered but not started: explicit trust opt-in is required",
-      severity: "warning",
-      source: "monitors",
-    });
-  }
-  const running = new Map<string, Map<string, RunningMonitor>>();
-  const started = new Map<string, Set<string>>();
-  let disposed = false;
-  const diagnostic = (name: string, message: string) => {
-    options.report({ message, severity: "warning", source: `monitor:${name}` });
+class MonitorRegistry {
+  private readonly running = new Map<string, Map<string, MonitorProcess>>();
+  private readonly started = new Map<string, Set<string>>();
+  private disposed = false;
+  private readonly limits: MonitorLimits;
+  private readonly abort = () => {
+    void this.dispose();
   };
-  const count = () => [...running.values()].reduce((total, entries) => total + entries.size, 0);
-  const launch = (sessionId: string, monitor: PluginMonitor) => {
+
+  private readonly monitors: readonly PluginMonitor[];
+  private readonly options: MonitorOptions;
+
+  public constructor(monitors: readonly PluginMonitor[], options: MonitorOptions) {
+    this.monitors = monitors;
+    this.options = options;
+    this.limits = {
+      grace: positive(options.stopGraceMs, 500),
+      output: positive(options.maxOutputBytes, 64 * 1024),
+      processes: positive(options.maxProcesses, 8),
+      runtime: positive(options.maxRuntimeMs, 24 * 60 * 60 * 1000),
+    };
+    if (monitors.length > 0 && options.enabled !== false && options.trusted !== true) {
+      options.report({
+        message: "Monitor commands discovered but not started: explicit trust opt-in is required",
+        severity: "warning",
+        source: "monitors",
+      });
+    }
+    options.signal?.addEventListener("abort", this.abort, { once: true });
+  }
+
+  public active() {
+    return [...this.running.values()].reduce((total, entries) => total + entries.size, 0);
+  }
+
+  private canLaunch(monitor: PluginMonitor) {
     if (
-      disposed ||
-      options.signal?.aborted ||
-      options.enabled === false ||
-      options.trusted !== true ||
-      !options.interactive
+      this.disposed ||
+      this.options.signal?.aborted ||
+      this.options.enabled === false ||
+      this.options.trusted !== true ||
+      !this.options.interactive
     ) {
-      return;
+      return false;
     }
+    let message: string | undefined;
     if (process.platform === "win32") {
-      diagnostic(
-        monitor.name,
-        "monitor execution unavailable on Windows: owned process-group termination is required",
-      );
-      return;
+      message =
+        "monitor execution unavailable on Windows: owned process-group termination is required";
+    } else if (this.active() >= this.limits.processes) {
+      message = "monitor process budget exhausted";
     }
-    const seen = started.get(sessionId) ?? new Set<string>();
-    if (seen.has(monitor.name)) {
-      return;
+    if (message === undefined) {
+      return true;
     }
-    if (count() >= maxProcesses) {
-      diagnostic(monitor.name, "monitor process budget exhausted");
+    this.options.report({ message, severity: "warning", source: `monitor:${monitor.name}` });
+    return false;
+  }
+
+  private launch(sessionId: string, monitor: PluginMonitor) {
+    const seen = this.started.get(sessionId) ?? new Set<string>();
+    if (seen.has(monitor.name) || !this.canLaunch(monitor)) {
       return;
     }
     seen.add(monitor.name);
-    started.set(sessionId, seen);
-    // Never inherit configured plugin secrets or the server environment implicitly.
-    const env = Object.fromEntries(
-      Object.entries(options.env).filter(([key]) => !key.startsWith("CLAUDE_PLUGIN_OPTION_")),
-    );
-    const child = spawn("/bin/sh", ["-c", monitor.command], {
-      cwd: options.cwd,
-      detached: true,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const entries = running.get(sessionId) ?? new Map<string, RunningMonitor>();
-    running.set(sessionId, entries);
-    let bytes = 0;
-    let stopping = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const { promise: done, resolve: finish } = Promise.withResolvers<undefined>();
-    const signalGroup = (signal: NodeJS.Signals) => {
-      if (child.pid === undefined) {
-        return;
-      }
-      try {
-        process.kill(-child.pid, signal);
-      } catch (error) {
-        if (!isRecord(error) || error["code"] !== "ESRCH") {
-          diagnostic(monitor.name, errorMessage(error));
-        }
-      }
-    };
-    const stop = () => {
-      if (stopping) {
-        return;
-      }
-      stopping = true;
-      signalGroup("SIGTERM");
-      killTimer = setTimeout(() => {
-        signalGroup("SIGKILL");
-      }, grace);
-    };
-    const runtimeTimer = setTimeout(() => {
-      diagnostic(monitor.name, "monitor runtime limit reached");
-      stop();
-    }, maxRuntime);
-    const output = (chunk: Buffer) => {
-      if (stopping) {
-        return;
-      }
-      const remaining = Math.max(0, maxOutput - bytes);
-      bytes += chunk.length;
-      if (remaining > 0) {
-        try {
-          options.notify(sessionId, monitor.name, chunk.subarray(0, remaining).toString("utf8"));
-        } catch (error) {
-          diagnostic(monitor.name, `monitor notification failed: ${errorMessage(error)}`);
-          stop();
-        }
-      }
-      if (bytes >= maxOutput) {
-        diagnostic(monitor.name, "monitor output limit reached");
-        stop();
-      }
-    };
-    child.stdout?.on("data", output);
-    child.stderr?.on("data", output);
-    child.once("error", (error) => {
-      diagnostic(monitor.name, errorMessage(error));
-    });
-    child.once("exit", () => {
-      signalGroup("SIGKILL");
-    });
-    child.once("close", () => {
-      clearTimeout(runtimeTimer);
-      if (killTimer !== undefined) {
-        clearTimeout(killTimer);
-      }
-      // A shell may exit while grandchildren still hold the process group.
-      signalGroup("SIGKILL");
+    this.started.set(sessionId, seen);
+    const entries = this.running.get(sessionId) ?? new Map<string, MonitorProcess>();
+    this.running.set(sessionId, entries);
+    const child = new MonitorProcess(sessionId, monitor, this.options, this.limits, () => {
       entries.delete(monitor.name);
       if (entries.size === 0) {
-        running.delete(sessionId);
+        this.running.delete(sessionId);
       }
-      finish(undefined);
     });
-    entries.set(monitor.name, { child, done, stop });
-  };
-  const stopSession = async (sessionId: string) => {
-    const entries = [...(running.get(sessionId)?.values() ?? [])];
+    entries.set(monitor.name, child);
+  }
+
+  public startSession(sessionId: string) {
+    this.startMatching(sessionId, "always");
+  }
+
+  public invokeSkill(sessionId: string, skill: string) {
+    this.startMatching(sessionId, `on-skill-invoke:${skill}`);
+  }
+
+  private startMatching(sessionId: string, when: PluginMonitor["when"]) {
+    for (const monitor of this.monitors) {
+      if (monitor.when === when) {
+        this.launch(sessionId, monitor);
+      }
+    }
+  }
+
+  public async stopSession(sessionId: string) {
+    const entries = [...(this.running.get(sessionId)?.values() ?? [])];
     for (const entry of entries) {
       entry.stop();
     }
     await Promise.all(entries.map(async (entry) => entry.done));
-    started.delete(sessionId);
-  };
-  const dispose = async () => {
-    disposed = true;
-    await Promise.all([...running.keys()].map(async (sessionId) => stopSession(sessionId)));
-  };
-  const abort = () => {
-    void dispose();
-  };
-  options.signal?.addEventListener("abort", abort, { once: true });
+    this.started.delete(sessionId);
+  }
+
+  public async dispose() {
+    this.disposed = true;
+    this.options.signal?.removeEventListener("abort", this.abort);
+    await Promise.all(
+      [...this.running.keys()].map(async (sessionId) => this.stopSession(sessionId)),
+    );
+  }
+}
+
+const registerMonitors = (monitors: readonly PluginMonitor[], options: MonitorOptions) => {
+  const registry = new MonitorRegistry(monitors, options);
   return {
-    active: () => count(),
-    dispose: async () => {
-      options.signal?.removeEventListener("abort", abort);
-      await dispose();
-    },
+    active: () => registry.active(),
+    dispose: async () => registry.dispose(),
     invokeSkill: (sessionId: string, skill: string) => {
-      for (const monitor of monitors) {
-        if (monitor.when === `on-skill-invoke:${skill}`) {
-          launch(sessionId, monitor);
-        }
-      }
+      registry.invokeSkill(sessionId, skill);
     },
     startSession: (sessionId: string) => {
-      for (const monitor of monitors) {
-        if (monitor.when === "always") {
-          launch(sessionId, monitor);
-        }
-      }
+      registry.startSession(sessionId);
     },
-    stopSession,
+    stopSession: async (sessionId: string) => registry.stopSession(sessionId),
   };
 };
 
-export type { MonitorOptions };
+export type { MonitorLimits, MonitorOptions };
 export { registerMonitors };

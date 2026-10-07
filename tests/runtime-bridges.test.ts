@@ -37,6 +37,7 @@ const monitor = {
   name: "watch",
   when: "always" as const,
 };
+const shellVariable = (name: string) => `\${${name}-unset}`;
 const workflow =
   "export const meta = { name: 'audit', description: 'Audit routes', phases: ['Read', 'Check'], }\nconst found = await agent('Read');\nreturn found;";
 
@@ -203,6 +204,41 @@ const setup = async (
   return { bridge, diagnostics, outputs, root };
 };
 describe("trusted monitor lifecycle", () => {
+  it("passes only explicit environment values and strips plugin option secrets", async () => {
+    const { bridge, outputs } = await setup(
+      { env: { CLAUDE_PLUGIN_OPTION_TOKEN: "secret", SAFE: "visible" } },
+      [
+        {
+          ...monitor,
+          command: `printf "%s|%s|%s" "$SAFE" "${shellVariable("CLAUDE_PLUGIN_OPTION_TOKEN")}" "${shellVariable("HOME")}"`,
+        },
+      ],
+    );
+    bridge.startSession("one");
+    await expect.poll(() => outputs.join("")).toBe("one/watch:visible|unset|unset");
+    await expect.poll(() => bridge.active()).toBe(0);
+  });
+  it("stops an infinite process if notification delivery fails", async () => {
+    const { bridge, diagnostics } = await setup(
+      {
+        notify: () => {
+          throw new Error("delivery failed");
+        },
+        stopGraceMs: 20,
+      },
+      [{ ...monitor, command: "while true; do printf output; done" }],
+    );
+    bridge.startSession("one");
+    await expect.poll(() => bridge.active()).toBe(0);
+    expect(diagnostics.map((entry) => entry.message)).toContain(
+      "monitor notification failed: delivery failed",
+    );
+  });
+  it.each([0, -1, 1.5, Number.POSITIVE_INFINITY])("rejects invalid limits %s", async (limit) => {
+    await expect(setup({ maxOutputBytes: limit })).rejects.toThrow(
+      "monitor limits must be positive integers",
+    );
+  });
   it("does not run when trust is omitted", async () => {
     const root = await temporary();
     const bridge = registerMonitors([monitor], {
