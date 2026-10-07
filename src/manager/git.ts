@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { devNull } from "node:os";
 import pathModule from "node:path";
 // Node's callback subprocess API is adapted once at the execution boundary.
@@ -31,6 +31,9 @@ const gitEnvironment = (scratch: string): Record<string, string> => ({
   // Only executable discovery is inherited, not Git or SSH configuration.
   // eslint-disable-next-line node/no-process-env
   PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+  // Git for Windows needs system executable discovery, not user configuration.
+  // eslint-disable-next-line node/no-process-env
+  ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
 });
 
 const repositorySize = async (directory: string): Promise<number> => {
@@ -247,7 +250,7 @@ const acquireGitSource = async (
   scratchParent: string,
 ): Promise<AcquiredSource> => {
   await mkdir(scratchParent, { recursive: true });
-  const scratch = await mkdtemp(pathModule.join(pathModule.resolve(scratchParent), "source-"));
+  const scratch = await mkdtemp(pathModule.join(await realpath(scratchParent), "source-"));
   const deadline = Date.now() + 60_000;
   const dispose = async (): Promise<void> => {
     await rm(scratch, { force: true, recursive: true });
