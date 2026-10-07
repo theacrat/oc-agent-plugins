@@ -1,0 +1,78 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.event.release.prerelease == false && github.event.release.target_commitish == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - name: Validate release tag, package version and main ancestry
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          test "$RELEASE_TAG" = "v$(bun -p 'require("./package.json").version')"
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: cloudflare/skills
+          ref: 41e0d19858946d18af9ee2c2feebbe2e11d829ff
+          path: .fixtures/cloudflare-skills
+          persist-credentials: false
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+        env:
+          CLOUDFLARE_SKILLS: ${{ github.workspace }}/.fixtures/cloudflare-skills
+      - run: bun pm pack --filename package.tgz
+      - name: Verify packed package in a production-only installation
+        run: |
+          mkdir packed
+          tar -xzf package.tgz -C packed
+          cd packed/package
+          bun install --production --ignore-scripts
+          bun -e 'import plugin from "./index.ts"; if (plugin.id !== "agent-plugins") throw new Error("Invalid plugin entrypoint")'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: npm-package
+          path: package.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-package
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install pinned npm with trusted publishing support
+        run: npm install --global npm@12.2.0 --ignore-scripts
+      - name: Publish verified tarball with OIDC and provenance
+        run: npm publish ./package.tgz --access public --provenance --ignore-scripts

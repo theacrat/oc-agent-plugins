@@ -1,17 +1,19 @@
-# opencode-agent-plugins
+# oc-agent-plugins
 
 An OpenCode v2 plugin that loads [Agent Plugins](https://agent-plugins.org/) 1.0.0 packages, plus Claude Code, Codex and Cursor plugins. Their skills, MCP servers, commands, rules and agents show up in OpenCode as if you'd configured them by hand. Each format and each component type can be turned off.
 
 ## Install
 
-Point `plugins` in `opencode.json(c)` at this directory. It has to be the directory, not `index.ts`, because OpenCode only accepts a directory as a local plugin path.
+Once published on npm, add `oc-agent-plugins` to OpenCode's `plugins` array. The public source is [theacrat/oc-agent-plugins](https://github.com/theacrat/oc-agent-plugins).
+
+For a local checkout, point `plugins` in `opencode.json(c)` at this directory. It has to be the directory, not `index.ts`, because OpenCode only accepts a directory as a local plugin path.
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "/path/to/opencode-agent-plugins",
+      "package": "/path/to/oc-agent-plugins",
       "options": {
         "discovery": { "paths": ["~/src/my-plugins"] },
         "formats": { "cursor": false },
@@ -133,6 +135,8 @@ bun run inspect --no-claude <path>    # turn a format off
 Source files import each other through the `#src/*` subpath import in `package.json`. That's because OpenCode runs `src/` as raw TypeScript, where tsconfig `paths` don't apply. A lint rule enforces it.
 
 [cloudflare/skills](https://github.com/cloudflare/skills) ships all four manifests and is the real-world fixture. CI clones it at a pinned commit, and locally `CLOUDFLARE_SKILLS=/path/to/checkout bun run test` runs the same check. `examples/hello` is a minimal Agent Plugin with a dependency-free stdio MCP server.
+
+Release and trusted-publisher setup are documented in [docs/publishing.md](docs/publishing.md).
 
 ### Agents
 

@@ -1,5 +1,5 @@
 {
-  "name": "opencode-agent-plugins",
+  "name": "oc-agent-plugins",
   "version": "0.1.0",
   "description": "Load Agent Plugins, Claude Code, Codex and Cursor packages in OpenCode v2, with skills, agents, MCP servers, commands, rules, opt-in hooks and monitors, and output styles.",
   "keywords": [
@@ -9,7 +9,15 @@
     "opencode-plugin",
     "skills"
   ],
+  "homepage": "https://github.com/theacrat/oc-agent-plugins#readme",
+  "bugs": {
+    "url": "https://github.com/theacrat/oc-agent-plugins/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theacrat/oc-agent-plugins.git"
+  },
   "files": [
     "src",
     "index.ts"
@@ -20,6 +28,10 @@
   },
   "exports": {
     ".": "./index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "check": "bun run lint && bun run fmt:check && bun run test",
