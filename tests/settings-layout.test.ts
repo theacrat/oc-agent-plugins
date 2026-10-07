@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseOptions } from "#src/options.ts";
+import { parseOptions, commandInjectionForPlugin, componentsForPlugin } from "#src/options.ts";
 import type { Diagnostic } from "#src/types.ts";
 
 const parse = (raw: Readonly<Record<string, unknown>>) => {
@@ -106,17 +106,41 @@ describe("grouped public settings", () => {
     });
   });
 
-  it("migrates old settings without silently losing trust", () => {
-    const { diagnostics, options } = parse({
-      paths: ["./plugins"],
-      shellInjection: false,
-      trustedHooks: ["p"],
+  it("has no legacy parsing or migration warnings", () => {
+    const { diagnostics, options } = parse({ paths: ["./plugins"], trustedHooks: ["p"] });
+    expect(options.trustedHooks).toEqual([]);
+    expect(diagnostics.map((entry) => entry.message)).toEqual([
+      'unknown option "options.paths"',
+      'unknown option "options.trustedHooks"',
+    ]);
+  });
+
+  it("merges per-plugin overrides with global defaults without affecting other plugins", () => {
+    const { options } = parse({
+      components: { agents: false, commands: { enabled: true, shellInjection: false }, mcp: true },
+      plugins: {
+        custom: {
+          components: {
+            agents: true,
+            commands: { shellInjection: true },
+            mcp: false,
+            styles: { allowSystemReplacement: true, selected: "concise" },
+          },
+        },
+      },
     });
-    expect(options.trustedHooks).toEqual(["p"]);
-    expect(options.shellInjection).toBe(false);
-    expect(diagnostics[0]?.message).toContain("deprecated");
-    expect(() =>
-      parse({ plugins: { p: { hooks: { trusted: true } } }, trustedHooks: ["p"] }),
-    ).toThrow("Do not mix");
+    const custom = componentsForPlugin(options, "custom");
+    const other = componentsForPlugin(options, "other");
+    expect([
+      custom.has("agents"),
+      custom.has("mcp"),
+      custom.has("commands"),
+      custom.has("skills"),
+    ]).toEqual([true, false, true, true]);
+    expect([other.has("agents"), other.has("mcp")]).toEqual([false, true]);
+    expect(commandInjectionForPlugin(options, "custom")).toBe(true);
+    expect(commandInjectionForPlugin(options, "other")).toBe(false);
+    expect(options.componentOverrides["custom"]?.outputStyle).toBe("concise");
+    expect(options.componentOverrides["custom"]?.allowSystemReplacement).toBe(true);
   });
 });

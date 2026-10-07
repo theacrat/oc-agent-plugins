@@ -6,7 +6,7 @@ import type { Plugin as PluginTypes } from "@opencode/plugin";
 
 import { loadAll } from "#src/loader.ts";
 import { scopeComponents, toAgentInfo, toPolicyServerConfigs, toSkillInfo } from "#src/opencode.ts";
-import { parseOptions } from "#src/options.ts";
+import { componentsForPlugin, parseOptions } from "#src/options.ts";
 import type { Options } from "#src/options.ts";
 import { registerCompatibility } from "#src/runtime/compatibility.ts";
 import { registerMcpPolicies } from "#src/runtime/mcp-policy.ts";
@@ -50,22 +50,17 @@ const readOptions = (ctx: Context) => {
   return { diagnostics, options };
 };
 
-const registerSkillsAndMcp = async (ctx: Context, options: Options, state: State) => {
-  const { components } = options;
-  if (components.has("skills") || components.has("rules")) {
-    await ctx.skill.transform((editor) => {
-      for (const skill of state.current.plugins.flatMap(toSkillInfo)) {
-        editor.add(skill);
-      }
-    });
-  }
-  if (components.has("mcp")) {
-    await ctx.mcp.transform((editor) => {
-      for (const [name, config] of state.current.plugins.flatMap(toPolicyServerConfigs)) {
-        editor.set(name, config);
-      }
-    });
-  }
+const registerSkillsAndMcp = async (ctx: Context, state: State) => {
+  await ctx.skill.transform((editor) => {
+    for (const skill of state.current.plugins.flatMap(toSkillInfo)) {
+      editor.add(skill);
+    }
+  });
+  await ctx.mcp.transform((editor) => {
+    for (const [name, config] of state.current.plugins.flatMap(toPolicyServerConfigs)) {
+      editor.set(name, config);
+    }
+  });
 };
 
 const loadConfiguredPlugins = async (
@@ -85,7 +80,9 @@ const loadConfiguredPlugins = async (
   });
   const loaded = {
     diagnostics: [...optionDiagnostics, ...result.diagnostics],
-    plugins: result.plugins.map((plugin) => scopeComponents(plugin, options.components)),
+    plugins: result.plugins.map((plugin) =>
+      scopeComponents(plugin, componentsForPlugin(options, plugin.manifest.name)),
+    ),
   };
   logDiagnostics(loaded.diagnostics);
   return loaded;
@@ -115,16 +112,14 @@ export default Plugin.define({
           ctx.tool.reload(),
         ]);
       };
-      await registerSkillsAndMcp(ctx, options, state);
-      if (options.components.has("agents")) {
-        await ctx.agent.transform((editor) => {
-          for (const agent of state.current.plugins.flatMap(toAgentInfo)) {
-            editor.update(agent.id, (draft) => {
-              Object.assign(draft, agent);
-            });
-          }
-        });
-      }
+      await registerSkillsAndMcp(ctx, state);
+      await ctx.agent.transform((editor) => {
+        for (const agent of state.current.plugins.flatMap(toAgentInfo)) {
+          editor.update(agent.id, (draft) => {
+            Object.assign(draft, agent);
+          });
+        }
+      });
       await registerCommands(ctx, options, state, reload, compatibility);
       return async () => {
         await resources.dispose();

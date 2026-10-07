@@ -374,10 +374,9 @@ describe("format precedence and toggles", () => {
         home: "/home/u",
         project: "/p",
         raw: {
-          components: { commands: false },
+          components: { commands: { enabled: false } },
+          discovery: { paths: ["~/plugins", "rel"], vendorDirs: true },
           formats: { claude: false, nope: true },
-          paths: ["~/plugins", "rel"],
-          vendorDirs: true,
           wat: 1,
         },
       },
@@ -405,8 +404,7 @@ describe("format precedence and toggles", () => {
     ]);
     expect(options.codexCache).toBe("/home/u/.codex/plugins/cache");
     expect(diagnostics.map((entry) => entry.message)).toEqual([
-      "legacy flat options are deprecated; group settings by feature and plugin (see README)",
-      'unknown option "wat"',
+      'unknown option "options.wat"',
       'unknown formats entry "nope"; expected one of agent-plugins, claude, codex, cursor',
     ]);
   });

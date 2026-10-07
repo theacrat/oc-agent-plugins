@@ -83,6 +83,30 @@ const rule = (name: string, globs: readonly string[], alwaysApply = false): Plug
 });
 
 describe("output styles", () => {
+  it("enforces system-replacement overrides per owning plugin", async () => {
+    const native = nativeHooks();
+    const runtime = await registerOutputStyles(
+      native.ctx,
+      [
+        {
+          allowSystemReplacement: true,
+          plugin: "allowed",
+          styles: [style("writer", { keepCodingInstructions: false })],
+        },
+        {
+          allowSystemReplacement: false,
+          plugin: "blocked",
+          styles: [style("writer", { keepCodingInstructions: false })],
+        },
+      ],
+      { main: { name: "writer", plugin: "allowed" } },
+      { allowSystemReplacement: true },
+    );
+    expect(native.model("main")).toEqual(["writer"]);
+    runtime.select("main", { name: "writer", plugin: "blocked" });
+    expect(() => native.model("main")).toThrow("cannot isolate coding instructions");
+    await runtime.dispose();
+  });
   it("rejects selective coding-instruction removal unless whole-system replacement is opted in", async () => {
     const native = nativeHooks();
     const runtime = await registerOutputStyles(

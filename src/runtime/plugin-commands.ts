@@ -3,6 +3,7 @@ import type { Plugin } from "@opencode/plugin";
 import { forwardAttachments } from "#src/attachments.ts";
 import { formatStatus, toCommands } from "#src/opencode.ts";
 import type { Options } from "#src/options.ts";
+import { commandInjectionForPlugin } from "#src/options.ts";
 import type { registerCompatibility } from "#src/runtime/compatibility.ts";
 import { addLspExportCommand } from "#src/runtime/lsp.ts";
 import { describeInjections, injectShell, shellRunner } from "#src/shell.ts";
@@ -24,8 +25,8 @@ const registerCommands = async (
   compatibility: Awaited<ReturnType<typeof registerCompatibility>>,
 ) => {
   // Only Claude-format templates contain `!`cmd`` injections; others render with an empty list.
-  const expandShell = async (rendered: Rendered, sessionID: string) => {
-    if (rendered.shell.length === 0 || !options.shellInjection) {
+  const expandShell = async (rendered: Rendered, sessionID: string, plugin: string) => {
+    if (rendered.shell.length === 0 || !commandInjectionForPlugin(options, plugin)) {
       return describeInjections(rendered);
     }
     const session = await ctx.session.get({ sessionID });
@@ -46,15 +47,21 @@ const registerCommands = async (
       },
       name: "agent-plugins",
     });
-    for (const { command, name } of state.current.plugins.flatMap(toCommands)) {
-      editor.add({
-        ...(command.description === undefined ? {} : { description: command.description }),
-        async execute({ delivery, prompt, sessionID }) {
-          const text = await expandShell(renderCommand(command, prompt.text), sessionID);
-          await ctx.session.prompt({ delivery, sessionID, text, ...forwardAttachments(prompt) });
-        },
-        name,
-      });
+    for (const plugin of state.current.plugins) {
+      for (const { command, name } of toCommands(plugin)) {
+        editor.add({
+          ...(command.description === undefined ? {} : { description: command.description }),
+          async execute({ delivery, prompt, sessionID }) {
+            const text = await expandShell(
+              renderCommand(command, prompt.text),
+              sessionID,
+              plugin.manifest.name,
+            );
+            await ctx.session.prompt({ delivery, sessionID, text, ...forwardAttachments(prompt) });
+          },
+          name,
+        });
+      }
     }
   });
 };

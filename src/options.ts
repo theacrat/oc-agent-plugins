@@ -10,6 +10,7 @@ import type { AppEndpoint } from "#src/vendor/bridges.ts";
 import type { PluginConfigurationOptions } from "#src/vendor/configuration.ts";
 
 interface Options {
+  readonly componentOverrides: Readonly<Record<string, ComponentOverride>>;
   readonly pluginAppEndpoints: Readonly<Record<string, Readonly<Record<string, AppEndpoint>>>>;
   readonly configuration: Readonly<Record<string, PluginConfigurationOptions>>;
   readonly trustedHooks: readonly string[];
@@ -25,6 +26,13 @@ interface Options {
   readonly components: ReadonlySet<Component>;
   // Run `!`cmd`` injections in Claude commands when the user invokes them.
   readonly shellInjection: boolean;
+}
+
+interface ComponentOverride {
+  readonly enabled: Readonly<Partial<Record<Component, boolean>>>;
+  readonly shellInjection?: boolean;
+  readonly outputStyle?: string;
+  readonly allowSystemReplacement?: boolean;
 }
 
 interface OptionsInput {
@@ -61,6 +69,7 @@ const KNOWN = new Set([
   "components",
   "appEndpoints",
   "pluginAppEndpoints",
+  "componentOverrides",
   "pluginSettings",
   "configuration",
   "trustedHooks",
@@ -148,6 +157,39 @@ const parsePluginAppEndpoints = (
       )
     : {};
 
+const parseComponentOverrides = (value: unknown): Record<string, ComponentOverride> => {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const output: Record<string, ComponentOverride> = {};
+  for (const [name, entry] of Object.entries(value)) {
+    if (!isRecord(entry)) {
+      throw new Error("component overrides must be objects");
+    }
+    const enabled: Partial<Record<Component, boolean>> = {};
+    const { components } = entry;
+    if (isRecord(components)) {
+      for (const component of COMPONENTS) {
+        const flag = components[component];
+        if (typeof flag === "boolean") {
+          enabled[component] = flag;
+        }
+      }
+    }
+    output[name] = {
+      enabled,
+      ...(typeof entry["shellInjection"] === "boolean"
+        ? { shellInjection: entry["shellInjection"] }
+        : {}),
+      ...(typeof entry["outputStyle"] === "string" ? { outputStyle: entry["outputStyle"] } : {}),
+      ...(typeof entry["allowSystemReplacement"] === "boolean"
+        ? { allowSystemReplacement: entry["allowSystemReplacement"] }
+        : {}),
+    };
+  }
+  return output;
+};
+
 // `{ claude: false }` turns one entry off; everything defaults to on.
 const toggles = <Key extends string>(
   value: unknown,
@@ -225,6 +267,7 @@ const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => v
   return {
     allowSystemReplacement: raw["allowSystemReplacement"] === true,
     appEndpoints: parseAppEndpoints(raw["appEndpoints"], report),
+    componentOverrides: parseComponentOverrides(raw["componentOverrides"]),
     configuration: parseConfigurationOptions(raw["configuration"], report),
     pluginAppEndpoints: parsePluginAppEndpoints(raw["pluginAppEndpoints"], report),
     pluginSettings: parsePluginSettings(raw["pluginSettings"], report),
@@ -243,5 +286,15 @@ const parseOptions = (input: OptionsInput, report: (diagnostic: Diagnostic) => v
   };
 };
 
-export type { Options, OptionsInput };
-export { parseOptions };
+const componentsForPlugin = (options: Options, name: string): ReadonlySet<Component> => {
+  const overrides = options.componentOverrides[name]?.enabled;
+  return new Set(
+    COMPONENTS.filter((component) => overrides?.[component] ?? options.components.has(component)),
+  );
+};
+
+const commandInjectionForPlugin = (options: Options, name: string) =>
+  options.componentOverrides[name]?.shellInjection ?? options.shellInjection;
+
+export type { ComponentOverride, Options, OptionsInput };
+export { commandInjectionForPlugin, componentsForPlugin, parseOptions };

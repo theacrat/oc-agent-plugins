@@ -81,8 +81,11 @@ const replaceMonitors = async (
   return create();
 };
 
-const styleSources = (result: LoadResult) =>
+const styleSources = (result: LoadResult, options: Options) =>
   result.plugins.map((plugin) => ({
+    allowSystemReplacement:
+      options.componentOverrides[plugin.manifest.name]?.allowSystemReplacement ??
+      options.allowSystemReplacement,
     plugin: plugin.manifest.name,
     styles: plugin.styles ?? [],
   }));
@@ -100,7 +103,7 @@ const setupRulesAndStyles = async (
       current().plugins.flatMap((plugin) => plugin.rules),
     ),
   );
-  const sources = styleSources(current());
+  const sources = styleSources(current(), options);
   const output = owned.own(
     await registerOutputStyles(
       ctx,
@@ -134,7 +137,7 @@ const compatibilityControls = (
   },
   async replace() {
     rules.replace(current().plugins.flatMap((plugin) => plugin.rules));
-    output.replace(styleSources(current()));
+    output.replace(styleSources(current(), options));
     monitors.current = await replaceMonitors(monitors.current, () =>
       createMonitors(ctx, options, current(), report),
     );
@@ -161,7 +164,7 @@ const registerCompatibility = async (
     const scopedSessions = new Set<string>();
     const stopEvents = await setupCompatibilityLifecycle(
       ctx,
-      options.outputStyle,
+      options,
       scopedSessions,
       output,
       rules,

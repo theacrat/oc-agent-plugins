@@ -1,5 +1,7 @@
 import type { Plugin } from "@opencode/plugin";
 
+import type { Options } from "#src/options.ts";
+import { componentsForPlugin } from "#src/options.ts";
 import type { MonitorRuntime } from "#src/runtime/compatibility-commands.ts";
 import type { RuleRuntime } from "#src/runtime/rules.ts";
 import type { StyleRuntime } from "#src/runtime/styles.ts";
@@ -7,7 +9,7 @@ import type { LoadResult, Report } from "#src/types.ts";
 
 const scopeOutputStyles = async (
   ctx: Plugin.Context,
-  selectedStyle: string | undefined,
+  options: Options,
   scoped: Set<string>,
   output: StyleRuntime,
 ) =>
@@ -16,7 +18,22 @@ const scopeOutputStyles = async (
       return;
     }
     scoped.add(event.sessionID);
-    const selected = selectedStyle?.split(":");
+    const overrides = Object.entries(options.componentOverrides).filter(
+      ([name, settings]) =>
+        settings.outputStyle !== undefined &&
+        componentsForPlugin(options, name).has("styles") &&
+        options.pluginSettings[name] !== false,
+    );
+    if (overrides.length > 1) {
+      throw new Error("Only one plugin may configure a selected output style");
+    }
+    const [override] = overrides;
+    const selectedStyle = override === undefined ? options.outputStyle : override[1].outputStyle;
+    const selected = (
+      override !== undefined && selectedStyle !== undefined && !selectedStyle.includes(":")
+        ? `${override[0]}:${selectedStyle}`
+        : selectedStyle
+    )?.split(":");
     output.select(
       event.sessionID,
       selected?.[0] !== undefined && selected[1] !== undefined
@@ -75,7 +92,7 @@ const watchCompatibilitySessions = (
 
 const setupCompatibilityLifecycle = async (
   ctx: Plugin.Context,
-  selectedStyle: string | undefined,
+  options: Options,
   scoped: Set<string>,
   output: StyleRuntime,
   rules: RuleRuntime,
@@ -85,7 +102,7 @@ const setupCompatibilityLifecycle = async (
 ) => {
   const stop = watchCompatibilitySessions(ctx, scoped, output, rules, current, monitors, report);
   try {
-    const prompt = await scopeOutputStyles(ctx, selectedStyle, scoped, output);
+    const prompt = await scopeOutputStyles(ctx, options, scoped, output);
     return async () => {
       stop();
       await prompt.dispose();

@@ -5,6 +5,7 @@ import type { PluginOutputStyle } from "#src/vendor/output-styles.ts";
 interface StyleSource {
   readonly plugin: string;
   readonly styles: readonly PluginOutputStyle[];
+  readonly allowSystemReplacement?: boolean;
 }
 interface StyleSelection {
   readonly plugin: string;
@@ -62,6 +63,18 @@ const validateSelection = (
   }
 };
 
+const styleOptions = (
+  sources: readonly StyleSource[],
+  selected: PluginOutputStyle | undefined,
+  defaults: StyleRuntimeOptions,
+): StyleRuntimeOptions => {
+  const owner =
+    selected === undefined ? undefined : sources.find((source) => source.styles.includes(selected));
+  return owner?.allowSystemReplacement === undefined
+    ? defaults
+    : { allowSystemReplacement: owner.allowSystemReplacement };
+};
+
 const registerOutputStyles = async (
   ctx: Pick<Plugin.Context, "session">,
   initial: readonly StyleSource[],
@@ -84,11 +97,9 @@ const registerOutputStyles = async (
     }
     const forced = sources.flatMap((source) => source.styles).find((style) => style.forceForPlugin);
     const selection = sessions.get(event.sessionID);
-    applyStyle(
-      event.system,
-      forced ?? (selection === undefined ? undefined : lookupStyle(sources, selection)),
-      options,
-    );
+    const selectedStyle =
+      forced ?? (selection === undefined ? undefined : lookupStyle(sources, selection));
+    applyStyle(event.system, selectedStyle, styleOptions(sources, selectedStyle, options));
   });
   return {
     clearSession: (sessionID) => {

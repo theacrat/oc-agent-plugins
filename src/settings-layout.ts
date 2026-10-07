@@ -3,21 +3,6 @@ import type { JsonRecord } from "#src/json.ts";
 import { COMPONENTS } from "#src/types.ts";
 import type { Report } from "#src/types.ts";
 
-const LEGACY = new Set([
-  "paths",
-  "vendorDirs",
-  "dataDir",
-  "shellInjection",
-  "configuration",
-  "pluginSettings",
-  "trustedHooks",
-  "trustedMonitors",
-  "outputStyle",
-  "allowSystemReplacement",
-  "appEndpoints",
-]);
-const GROUPED = new Set(["discovery", "storage", "plugins"]);
-
 const group = (value: unknown, source: string): JsonRecord => {
   if (value === undefined) {
     return {};
@@ -70,13 +55,56 @@ const FEATURE_FIELDS: Readonly<Record<string, readonly string[]>> = {
   styles: ["selected", "allowSystemReplacement"],
 };
 
-// The legacy runtime shape stays private to the normalisation boundary. Users configure features
-// together and each plugin in one place, not independent name-keyed maps and trust lists.
+// Convert the grouped public settings into the runtime's indexed settings.
+function componentSettings(
+  value: unknown,
+  output: Record<string, unknown>,
+  report: Report,
+  source = "components",
+) {
+  const components: Record<string, boolean> = {};
+  const switches = group(value, source);
+  fields(switches, COMPONENTS, source, report);
+  for (const feature of COMPONENTS.filter((name) => !["commands", "styles"].includes(name))) {
+    const enabled = bool(switches, feature, source);
+    if (enabled !== undefined) {
+      components[feature] = enabled;
+    }
+  }
+  for (const feature of ["commands", "styles"] as const) {
+    const settings = group(switches[feature], `${source}.${feature}`);
+    const special = FEATURE_FIELDS[feature] ?? [];
+    fields(settings, ["enabled", ...special], `${source}.${feature}`, report);
+    const enabled = bool(settings, "enabled", `${source}.${feature}`);
+    if (enabled !== undefined) {
+      components[feature] = enabled;
+    }
+    if (feature === "commands") {
+      const injection = bool(settings, "shellInjection", `${source}.${feature}`);
+      if (injection !== undefined) {
+        output["shellInjection"] = injection;
+      }
+    }
+    if (feature === "styles") {
+      if (settings["selected"] !== undefined && typeof settings["selected"] !== "string") {
+        throw new Error(`${source}.styles.selected must be a plugin:name string`);
+      }
+      copy(settings, "selected", output, "outputStyle");
+      const replacement = bool(settings, "allowSystemReplacement", `${source}.${feature}`);
+      if (replacement !== undefined) {
+        output["allowSystemReplacement"] = replacement;
+      }
+    }
+  }
+  output["components"] = components;
+}
+
 const pluginSettings = (value: unknown, report: Report): JsonRecord => {
   const entries = group(value, "plugins");
   const activation: Record<string, boolean> = {};
   const configuration: Record<string, unknown> = {};
   const endpoints: Record<string, unknown> = {};
+  const overrides: Record<string, unknown> = {};
   const hooks: string[] = [];
   const monitors: string[] = [];
   for (const [name, raw] of Object.entries(entries)) {
@@ -84,7 +112,7 @@ const pluginSettings = (value: unknown, report: Report): JsonRecord => {
     const entry = group(raw, source);
     fields(
       entry,
-      ["enabled", "hooks", "monitors", "configuration", "agents", "mcp"],
+      ["enabled", "hooks", "monitors", "configuration", "agents", "mcp", "components"],
       source,
       report,
     );
@@ -106,52 +134,18 @@ const pluginSettings = (value: unknown, report: Report): JsonRecord => {
     const mcp = group(entry["mcp"], `${source}.mcp`);
     fields(mcp, ["appEndpoints"], `${source}.mcp`, report);
     endpoints[name] = group(mcp["appEndpoints"], `${source}.mcp.appEndpoints`);
+    const override: Record<string, unknown> = {};
+    componentSettings(entry["components"], override, report, `${source}.components`);
+    overrides[name] = override;
   }
   return {
+    componentOverrides: overrides,
     configuration,
     pluginAppEndpoints: endpoints,
     pluginSettings: activation,
     trustedHooks: hooks,
     trustedMonitors: monitors,
   };
-};
-
-const componentSettings = (value: unknown, output: Record<string, unknown>, report: Report) => {
-  const components: Record<string, boolean> = {};
-  const switches = group(value, "components");
-  fields(switches, COMPONENTS, "components", report);
-  for (const feature of COMPONENTS.filter((name) => !["commands", "styles"].includes(name))) {
-    const enabled = bool(switches, feature, "components");
-    if (enabled !== undefined) {
-      components[feature] = enabled;
-    }
-  }
-  for (const feature of ["commands", "styles"] as const) {
-    const settings = group(switches[feature], `components.${feature}`);
-    const special = FEATURE_FIELDS[feature] ?? [];
-    fields(settings, ["enabled", ...special], `components.${feature}`, report);
-    const enabled = bool(settings, "enabled", `components.${feature}`);
-    if (enabled !== undefined) {
-      components[feature] = enabled;
-    }
-    if (feature === "commands") {
-      const injection = bool(settings, "shellInjection", `components.${feature}`);
-      if (injection !== undefined) {
-        output["shellInjection"] = injection;
-      }
-    }
-    if (feature === "styles") {
-      if (settings["selected"] !== undefined && typeof settings["selected"] !== "string") {
-        throw new Error("components.styles.selected must be a plugin:name string");
-      }
-      copy(settings, "selected", output, "outputStyle");
-      const replacement = bool(settings, "allowSystemReplacement", `components.${feature}`);
-      if (replacement !== undefined) {
-        output["allowSystemReplacement"] = replacement;
-      }
-    }
-  }
-  output["components"] = components;
 };
 
 const groupedSettings = (raw: JsonRecord, report: Report): JsonRecord => {
@@ -183,23 +177,4 @@ const groupedSettings = (raw: JsonRecord, report: Report): JsonRecord => {
   return output;
 };
 
-const normaliseSettings = (raw: JsonRecord, report: Report): JsonRecord => {
-  const legacy = Object.keys(raw).some((key) => LEGACY.has(key));
-  if (legacy) {
-    if (Object.keys(raw).some((key) => GROUPED.has(key))) {
-      throw new Error(
-        "Do not mix legacy flat options with grouped options; migrate the whole options object",
-      );
-    }
-    report({
-      message:
-        "legacy flat options are deprecated; group settings by feature and plugin (see README)",
-      severity: "warning",
-      source: "options",
-    });
-    return raw;
-  }
-  return groupedSettings(raw, report);
-};
-
-export { normaliseSettings };
+export { groupedSettings as normaliseSettings };

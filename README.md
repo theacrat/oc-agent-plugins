@@ -33,17 +33,17 @@ Settings inside the OpenCode plugin entry's `options` have two groups of respons
 
 Only set what you need. Defaults still load skills, agents, commands and MCP servers; hooks and monitors require explicit per-plugin trust.
 
-| Group            | Settings                                                                                                   | Default                                            |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `discovery`      | `paths`, `vendorDirs`                                                                                      | No extra paths; vendor folders off                 |
-| `storage`        | `dataDir`                                                                                                  | `$XDG_DATA_HOME/opencode/agent-plugins`            |
-| `formats`        | `agent-plugins`, `claude`, `codex`, `cursor` booleans                                                      | All on                                             |
-| `components`     | `skills`, `agents`, `mcp`, `rules`, `hooks`, `monitors`, `lsp` booleans                                    | All on; trust still required for execution         |
-| `commands`       | `enabled`, `shellInjection`                                                                                | Both on                                            |
-| `styles`         | `enabled`, `selected` (`plugin:name`), `allowSystemReplacement`                                            | Enabled; no selected style; system replacement off |
-| `plugins.<name>` | `enabled`, `hooks.trusted`, `monitors.trusted`, `configuration`, `agents.modelAliases`, `mcp.appEndpoints` | Normal activation; no trust or supplied values     |
+| Group            | Settings                                                                                                                 | Default                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `discovery`      | `paths`, `vendorDirs`                                                                                                    | No extra paths; vendor folders off                 |
+| `storage`        | `dataDir`                                                                                                                | `$XDG_DATA_HOME/opencode/agent-plugins`            |
+| `formats`        | `agent-plugins`, `claude`, `codex`, `cursor` booleans                                                                    | All on                                             |
+| `components`     | `skills`, `agents`, `mcp`, `rules`, `hooks`, `monitors`, `lsp` booleans                                                  | All on; trust still required for execution         |
+| `commands`       | `enabled`, `shellInjection`                                                                                              | Both on                                            |
+| `styles`         | `enabled`, `selected` (`plugin:name`), `allowSystemReplacement`                                                          | Enabled; no selected style; system replacement off |
+| `plugins.<name>` | `enabled`, `components`, `hooks.trusted`, `monitors.trusted`, `configuration`, `agents.modelAliases`, `mcp.appEndpoints` | Normal activation; no trust or supplied values     |
 
-Unknown fields are reported with their full path. Malformed nested settings reject the configuration rather than silently changing trust. Old flat options still work with a migration warning, but cannot be mixed with the grouped layout in the same `options` object.
+Unknown fields are reported with their full path. Malformed nested settings reject the configuration rather than silently changing trust. There is no legacy layout or migration support.
 
 ## Where plugins are found
 
@@ -143,6 +143,10 @@ This is an example `options` object. It belongs inside the OpenCode plugin entry
   "plugins": {
     "my-plugin": {
       "enabled": true,
+      "components": {
+        "mcp": false,
+        "commands": { "shellInjection": true },
+      },
       "hooks": { "trusted": true },
       "monitors": { "trusted": false },
       "configuration": {
@@ -178,8 +182,27 @@ For a Cursor plugin, put `variables` and optionally `publicVariables` inside tha
 
 `enabled: false` and `disabled: true` MCP servers stay disabled. Exact tool allowlists and denylists filter the catalog and are rechecked at execution; `prompt` approval requests permission without overriding configured denies. OAuth `false` and validated native-compatible settings are retained. Timeout seconds are converted to native milliseconds. An environment whitelist (`env_vars`), dynamic header helper, unsupported OAuth resource/policy, SSE/WebSocket transport or bundle archive rejects that entry with remediation. It is not substituted with a less restrictive connection.
 
-### Migrating flat settings
+### Per-plugin component overrides
 
-Move `paths`/`vendorDirs` to `discovery`, `dataDir` to `storage`, and `shellInjection` to `components.commands`. Simple component switches stay booleans under `components`. Move `outputStyle`/`allowSystemReplacement` to `components.styles.selected`/`components.styles.allowSystemReplacement`.
+`plugins.<name>.components` has the same shape as the global `components` object. Omitted settings inherit global values. An explicit `true` or `false` overrides the global switch for that plugin only. Command and style objects inherit each omitted field individually.
 
-For each plugin, collect its old `pluginSettings`, `trustedHooks`, `trustedMonitors`, `configuration` and `appEndpoints` entries under `plugins.<name>`. Put model aliases in that plugin's `agents.modelAliases` and endpoint mappings in its `mcp.appEndpoints`. Do not combine old and new keys in one options object.
+```jsonc
+{
+  "components": {
+    "agents": false,
+    "mcp": true,
+    "commands": { "enabled": true, "shellInjection": false },
+  },
+  "plugins": {
+    "my-plugin": {
+      "components": {
+        "agents": true,
+        "mcp": false,
+        "commands": { "shellInjection": true },
+      },
+    },
+  },
+}
+```
+
+Here only `my-plugin` gets agents, its MCP servers are disabled, and only its commands may perform shell injection. Other component defaults and every other plugin remain unchanged. Hook/monitor enablement does not grant trust; their separate per-plugin trust opt-ins are still required. A per-plugin `components.styles.selected` may use a local style name; only one enabled plugin can supply a default selected style for a session.
