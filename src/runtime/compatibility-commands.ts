@@ -38,17 +38,19 @@ const addStyleCommand = (
 const addMonitorCommand = (
   ctx: Plugin.Context,
   editor: CommandEditor,
-  current: () => readonly MonitorRuntime[],
+  current: () => ReadonlyMap<string, MonitorRuntime>,
 ) => {
   editor.add({
     description: "Explicitly start or stop trusted monitors for this session",
     async execute({ sessionID, prompt }) {
       if (prompt.text.trim() === "start") {
-        for (const monitor of current()) {
+        for (const monitor of current().values()) {
           monitor.startSession(sessionID);
         }
       } else if (prompt.text.trim() === "stop") {
-        await Promise.all(current().map(async (monitor) => monitor.stopSession(sessionID)));
+        await Promise.all(
+          [...current().values()].map(async (monitor) => monitor.stopSession(sessionID)),
+        );
       } else {
         throw new Error("Use start or stop; monitors require trustedMonitors opt-in");
       }

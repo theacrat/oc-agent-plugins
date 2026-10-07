@@ -9,6 +9,7 @@ import {
 } from "#src/runtime/compatibility-commands.ts";
 import { registerConfiguredHooks } from "#src/runtime/compatibility-hooks.ts";
 import { setupCompatibilityLifecycle } from "#src/runtime/compatibility-lifecycle.ts";
+import { defaultStyle } from "#src/runtime/default-style.ts";
 import { registerMonitors } from "#src/runtime/monitors.ts";
 import { resourceScope } from "#src/runtime/resources.ts";
 import { registerScopedRules } from "#src/runtime/rules.ts";
@@ -41,43 +42,49 @@ const createMonitors = (
   result: LoadResult,
   report: Report,
 ) =>
-  result.plugins.map((plugin) =>
-    registerMonitors(
-      (plugin.runtimes?.monitors ?? []).map((monitor) => ({
-        command:
-          plugin.format === "agent-plugins"
-            ? monitor.command
-            : placeholdersFor(plugin.format, {
-                dataDir: plugin.dataDir,
-                env: {},
-                root: plugin.root,
-              }).expandContent(monitor.command),
-        description: monitor.description,
-        name: monitor.name,
-        when: monitor.when,
-      })),
-      {
-        cwd: ctx.location.directory,
-        env: {
-          CLAUDE_PLUGIN_DATA: plugin.dataDir,
-          CLAUDE_PLUGIN_ROOT: plugin.root,
-          PATH: "/usr/local/bin:/usr/bin:/bin",
-        },
-        interactive: true,
-        notify: (sessionID, monitor, text) => {
-          void deliverMonitor(ctx, sessionID, plugin.manifest.name, monitor, text, report);
-        },
-        report,
-        trusted: options.trustedMonitors.includes(plugin.manifest.name),
-      },
+  new Map(
+    result.plugins.map(
+      (plugin) =>
+        [
+          plugin.manifest.name,
+          registerMonitors(
+            (plugin.runtimes?.monitors ?? []).map((monitor) => ({
+              command:
+                plugin.format === "agent-plugins"
+                  ? monitor.command
+                  : placeholdersFor(plugin.format, {
+                      dataDir: plugin.dataDir,
+                      env: {},
+                      root: plugin.root,
+                    }).expandContent(monitor.command),
+              description: monitor.description,
+              name: monitor.name,
+              when: monitor.when,
+            })),
+            {
+              cwd: ctx.location.directory,
+              env: {
+                CLAUDE_PLUGIN_DATA: plugin.dataDir,
+                CLAUDE_PLUGIN_ROOT: plugin.root,
+                PATH: "/usr/local/bin:/usr/bin:/bin",
+              },
+              interactive: true,
+              notify: (sessionID, monitor, text) => {
+                void deliverMonitor(ctx, sessionID, plugin.manifest.name, monitor, text, report);
+              },
+              report,
+              trusted: options.trustedMonitors.includes(plugin.manifest.name),
+            },
+          ),
+        ] as const,
     ),
   );
 
 const replaceMonitors = async (
-  previous: readonly ReturnType<typeof registerMonitors>[],
+  previous: ReadonlyMap<string, ReturnType<typeof registerMonitors>>,
   create: () => ReturnType<typeof createMonitors>,
 ) => {
-  await Promise.all(previous.map(async (monitor) => monitor.dispose()));
+  await Promise.all([...previous.values()].map(async (monitor) => monitor.dispose()));
   return create();
 };
 
@@ -136,6 +143,7 @@ const compatibilityControls = (
     await owned.dispose();
   },
   async replace() {
+    defaultStyle(options, current());
     rules.replace(current().plugins.flatMap((plugin) => plugin.rules));
     output.replace(styleSources(current(), options));
     monitors.current = await replaceMonitors(monitors.current, () =>
@@ -158,7 +166,7 @@ const registerCompatibility = async (
     const monitors = { current: createMonitors(ctx, options, current(), report) };
     owned.own({
       dispose: async () => {
-        await Promise.all(monitors.current.map(async (monitor) => monitor.dispose()));
+        await Promise.all([...monitors.current.values()].map(async (monitor) => monitor.dispose()));
       },
     });
     const scopedSessions = new Set<string>();

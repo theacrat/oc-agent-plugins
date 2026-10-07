@@ -1,8 +1,8 @@
 import type { Plugin } from "@opencode/plugin";
 
 import type { Options } from "#src/options.ts";
-import { componentsForPlugin } from "#src/options.ts";
 import type { MonitorRuntime } from "#src/runtime/compatibility-commands.ts";
+import { defaultStyle } from "#src/runtime/default-style.ts";
 import type { RuleRuntime } from "#src/runtime/rules.ts";
 import type { StyleRuntime } from "#src/runtime/styles.ts";
 import type { LoadResult, Report } from "#src/types.ts";
@@ -12,34 +12,14 @@ const scopeOutputStyles = async (
   options: Options,
   scoped: Set<string>,
   output: StyleRuntime,
+  current: () => LoadResult,
 ) =>
   ctx.session.hook("prompt", (event) => {
     if (scoped.has(event.sessionID)) {
       return;
     }
+    output.select(event.sessionID, defaultStyle(options, current()));
     scoped.add(event.sessionID);
-    const overrides = Object.entries(options.componentOverrides).filter(
-      ([name, settings]) =>
-        settings.outputStyle !== undefined &&
-        componentsForPlugin(options, name).has("styles") &&
-        options.pluginSettings[name] !== false,
-    );
-    if (overrides.length > 1) {
-      throw new Error("Only one plugin may configure a selected output style");
-    }
-    const [override] = overrides;
-    const selectedStyle = override === undefined ? options.outputStyle : override[1].outputStyle;
-    const selected = (
-      override !== undefined && selectedStyle !== undefined && !selectedStyle.includes(":")
-        ? `${override[0]}:${selectedStyle}`
-        : selectedStyle
-    )?.split(":");
-    output.select(
-      event.sessionID,
-      selected?.[0] !== undefined && selected[1] !== undefined
-        ? { name: selected.slice(1).join(":"), plugin: selected[0] }
-        : undefined,
-    );
   });
 
 const watchCompatibilitySessions = (
@@ -48,7 +28,7 @@ const watchCompatibilitySessions = (
   output: StyleRuntime,
   rules: RuleRuntime,
   current: () => LoadResult,
-  monitors: () => readonly MonitorRuntime[],
+  monitors: () => ReadonlyMap<string, MonitorRuntime>,
   report: Report,
 ) => {
   const controller = new AbortController();
@@ -60,17 +40,20 @@ const watchCompatibilitySessions = (
           scoped.delete(sessionID);
           output.clearSession(sessionID);
           rules.clearSession(sessionID);
-          await Promise.all(monitors().map(async (monitor) => monitor.stopSession(sessionID)));
-        } else if (event.type === "session.skill.activated" && scoped.has(event.data.sessionID)) {
-          const index = current().plugins.findIndex((plugin) =>
-            event.data.id.startsWith(`${plugin.manifest.name}:`),
+          await Promise.all(
+            [...monitors().values()].map(async (monitor) => monitor.stopSession(sessionID)),
           );
-          const plugin = current().plugins[index];
+        } else if (event.type === "session.skill.activated" && scoped.has(event.data.sessionID)) {
+          const plugin = current().plugins.find((entry) =>
+            event.data.id.startsWith(`${entry.manifest.name}:`),
+          );
           if (plugin !== undefined) {
-            monitors()[index]?.invokeSkill(
-              event.data.sessionID,
-              event.data.id.slice(plugin.manifest.name.length + 1),
-            );
+            monitors()
+              .get(plugin.manifest.name)
+              ?.invokeSkill(
+                event.data.sessionID,
+                event.data.id.slice(plugin.manifest.name.length + 1),
+              );
           }
         }
       }
@@ -97,12 +80,13 @@ const setupCompatibilityLifecycle = async (
   output: StyleRuntime,
   rules: RuleRuntime,
   current: () => LoadResult,
-  monitors: () => readonly MonitorRuntime[],
+  monitors: () => ReadonlyMap<string, MonitorRuntime>,
   report: Report,
 ) => {
   const stop = watchCompatibilitySessions(ctx, scoped, output, rules, current, monitors, report);
   try {
-    const prompt = await scopeOutputStyles(ctx, options, scoped, output);
+    defaultStyle(options, current());
+    const prompt = await scopeOutputStyles(ctx, options, scoped, output, current);
     return async () => {
       stop();
       await prompt.dispose();
