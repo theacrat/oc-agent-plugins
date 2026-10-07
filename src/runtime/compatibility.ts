@@ -14,7 +14,7 @@ import { registerMonitors } from "#src/runtime/monitors.ts";
 import { resourceScope } from "#src/runtime/resources.ts";
 import { registerScopedRules } from "#src/runtime/rules.ts";
 import { registerOutputStyles } from "#src/runtime/styles.ts";
-import type { LoadResult, Report } from "#src/types.ts";
+import type { AgentPlugin, LoadResult, Report } from "#src/types.ts";
 import { placeholdersFor } from "#src/vendor/placeholders.ts";
 
 const deliverMonitor = async (
@@ -40,6 +40,20 @@ const deliverMonitor = async (
     });
   }
 };
+
+const notifyMonitor =
+  (ctx: Plugin.Context, plugin: AgentPlugin, report: Report) =>
+  (sessionID: string, monitor: string, text: string) => {
+    void deliverMonitor(
+      ctx,
+      sessionID,
+      plugin.manifest.name,
+      monitor,
+      text,
+      report,
+      plugin.configuration?.redact ?? ((value) => value),
+    );
+  };
 
 const createMonitors = (
   ctx: Plugin.Context,
@@ -74,17 +88,7 @@ const createMonitors = (
                 PATH: "/usr/local/bin:/usr/bin:/bin",
               },
               interactive: true,
-              notify: (sessionID, monitor, text) => {
-                void deliverMonitor(
-                  ctx,
-                  sessionID,
-                  plugin.manifest.name,
-                  monitor,
-                  text,
-                  report,
-                  plugin.configuration?.redact ?? ((value) => value),
-                );
-              },
+              notify: notifyMonitor(ctx, plugin, report),
               report,
               trusted: options.trustedMonitors.includes(plugin.manifest.name),
             },
