@@ -31,6 +31,12 @@ const assertModelSafety = (plugin: AgentPlugin): void => {
     ]),
     ...(plugin.runtimes?.themes ?? []).map((entry) => JSON.stringify(entry)),
     ...(plugin.runtimes?.channels ?? []).flatMap((entry) => [entry.server, entry.displayName]),
+    ...(plugin.runtimes?.monitors ?? []).flatMap((entry) => [
+      entry.name,
+      entry.description,
+      entry.command,
+      entry.when,
+    ]),
     JSON.stringify(plugin.lsp ?? {}),
   ];
   for (const value of strings) {

@@ -82,6 +82,12 @@ const validatePolicy = (
     error(`${event}: failClosed must be boolean`);
     return false;
   }
+  if (handler["failClosed"] === true && context.phase !== "before") {
+    error(
+      `${event}: failClosed is only supported for before-tool hooks; handler rejected, not weakened`,
+    );
+    return false;
+  }
   if (format === "codex" && args !== undefined) {
     error(`${event}: Codex command hooks do not declare exec args`);
     return false;

@@ -30,6 +30,7 @@ interface ResolvedConfiguration {
   readonly expand: (text: string) => string;
   readonly expandContent: (text: string) => string;
   readonly assertContent: (text: string) => void;
+  readonly redact: (text: string) => string;
   readonly hookEnvironment: () => Readonly<Record<string, string>>;
 }
 interface ConfigurationSnapshot {
@@ -198,6 +199,18 @@ const expandToken = (
 
 const resolveConfiguration = (input: ConfigurationInput): ResolvedConfiguration => {
   const snapshot = captureConfiguration(structuredClone(input));
+  const secrets = [...new Set(snapshot.secretStrings)]
+    .filter((secret) => secret !== "")
+    .toSorted((left, right) => right.length - left.length);
+  const secretPattern =
+    secrets.length === 0
+      ? undefined
+      : new RegExp(
+          secrets
+            .map((secret) => secret.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`))
+            .join("|"),
+          "gu",
+        );
   const pattern =
     snapshot.format === "claude"
       ? /\$\{user_config\.(?<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?<fallback>[^}]*))?\}/gu
@@ -225,6 +238,8 @@ const resolveConfiguration = (input: ConfigurationInput): ResolvedConfiguration 
           textOf(value),
         ]),
       ),
+    redact: (text) =>
+      secretPattern === undefined ? text : text.replaceAll(secretPattern, () => "[REDACTED]"),
     values: snapshot.publicValues,
   };
 };

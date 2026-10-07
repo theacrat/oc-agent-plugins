@@ -24,15 +24,20 @@ const deliverMonitor = async (
   monitor: string,
   text: string,
   report: Report,
+  redact: (text: string) => string,
 ) => {
   try {
     await ctx.session.synthetic({
       resume: false,
       sessionID,
-      text: `Monitor ${plugin}:${monitor}\n${text}`,
+      text: redact(`Monitor ${plugin}:${monitor}\n${text}`),
     });
   } catch {
-    report({ message: "monitor output delivery failed", severity: "warning", source: monitor });
+    report({
+      message: "monitor output delivery failed",
+      severity: "warning",
+      source: redact(monitor),
+    });
   }
 };
 
@@ -70,7 +75,15 @@ const createMonitors = (
               },
               interactive: true,
               notify: (sessionID, monitor, text) => {
-                void deliverMonitor(ctx, sessionID, plugin.manifest.name, monitor, text, report);
+                void deliverMonitor(
+                  ctx,
+                  sessionID,
+                  plugin.manifest.name,
+                  monitor,
+                  text,
+                  report,
+                  plugin.configuration?.redact ?? ((value) => value),
+                );
               },
               report,
               trusted: options.trustedMonitors.includes(plugin.manifest.name),

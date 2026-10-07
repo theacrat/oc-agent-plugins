@@ -26,6 +26,16 @@ const serverSources = (raw: JsonRecord, apps: JsonRecord, spec: FormatSpec) => (
 const appEndpointsFor = (options: VendorLoadOptions, name: string) =>
   options.pluginAppEndpoints?.[name] ?? options.appEndpoints ?? {};
 
+const sanitisedReport =
+  (report: Report, redact: (text: string) => string): Report =>
+  (diagnostic) => {
+    report({
+      ...diagnostic,
+      message: redact(diagnostic.message),
+      source: redact(diagnostic.source),
+    });
+  };
+
 const configurationFor = (
   format: VendorFormat,
   raw: JsonRecord,
@@ -47,12 +57,13 @@ const loadVendorContents = async (
   manifest: Manifest,
   raw: JsonRecord,
   options: VendorLoadOptions,
-  report: Report,
+  unsafeReport: Report,
 ): Promise<VendorLoad> => {
   const spec = SPECS[format];
   const dataDir = path.join(options.dataRoot, manifest.name);
   const settings = options.configuration?.[manifest.name];
   const configuration = configurationFor(format, raw, options, manifest.name);
+  const report = sanitisedReport(unsafeReport, configuration.redact);
   const placeholders = placeholdersFor(format, { configuration, dataDir, env: options.env, root });
   const endpoints = appEndpointsFor(options, manifest.name);
   const apps = await loadAppMappings(root, raw["apps"], endpoints, report);
