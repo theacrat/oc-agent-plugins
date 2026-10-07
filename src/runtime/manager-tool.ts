@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import path from "node:path";
 
 import type { Plugin } from "@opencode/plugin";
 import type { ToolContext } from "@opencode/plugin/promise/tool";
@@ -51,6 +52,7 @@ const validateRemoteTarget = (args: ReturnType<typeof parseArguments>) => {
   if (
     args.command === "install" &&
     target !== undefined &&
+    !path.win32.isAbsolute(target) &&
     (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(target) || target.startsWith("git@"))
   ) {
     const [url = "", fragment] = target.split("#");

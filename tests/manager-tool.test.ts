@@ -77,6 +77,14 @@ const harness = () => {
 };
 
 describe("manager tool approval boundary", () => {
+  it("does not interpret Windows drive paths as remote URLs before approval", async () => {
+    const native = harness();
+    await registerManagerTool(native.ctx);
+    native.useQuestion();
+    await native.invoke({ action: "install", source: String.raw`C:\plugins\local` });
+    expect(native.questionExecute).toHaveBeenCalledOnce();
+    expect(native.get).not.toHaveBeenCalled();
+  });
   it("retains the deny-filter permission and a closed input schema", async () => {
     const native = harness();
     await registerManagerTool(native.ctx);
