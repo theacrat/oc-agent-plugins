@@ -1,0 +1,13 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: lint
+      run: bunx oxlint
+    - name: format
+      run: bunx oxfmt --check
+    - name: test
+      run: bunx vitest run
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: bunx commitlint --edit {1}

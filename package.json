@@ -1,0 +1,45 @@
+{
+  "name": "opencode-agent-plugins",
+  "version": "0.1.0",
+  "description": "OpenCode v2 plugin that loads Agent Plugins (agent-plugins.org) skills and MCP servers",
+  "keywords": [
+    "agent-plugins",
+    "mcp",
+    "opencode",
+    "opencode-plugin",
+    "skills"
+  ],
+  "license": "MIT",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "check": "bun run lint && bun run fmt:check && bun run test",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "inspect": "bun scripts/inspect.ts",
+    "lint": "oxlint",
+    "prepare": "lefthook install",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.24",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "@commitlint/types": "^21.2.3",
+    "@types/bun": "1.4.2",
+    "lefthook": "^2.1.16",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "typescript": "^7.0.2",
+    "vitest": "5.0.3"
+  }
+}

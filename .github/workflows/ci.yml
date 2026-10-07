@@ -1,0 +1,20 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: cloudflare/skills
+          ref: 41e0d19858946d18af9ee2c2feebbe2e11d829ff
+          path: .fixtures/cloudflare-skills
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+        env:
+          CLOUDFLARE_SKILLS: ${{ github.workspace }}/.fixtures/cloudflare-skills
