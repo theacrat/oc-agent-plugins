@@ -63,20 +63,30 @@ const plugin: AgentPlugin = {
 };
 
 describe("opencode mapping", () => {
+  it("distinguishes displayed skill names from different plugins without changing source content", () => {
+    const other = { ...plugin, manifest: { ...plugin.manifest, name: "other" } };
+    const [first] = toSkillInfo(plugin);
+    const [second] = toSkillInfo(other);
+    expect(first?.name).toBe("demo:deploy");
+    expect(second?.name).toBe("other:deploy");
+    expect(first?.content).toBe("Body");
+    expect(second?.content).toBe("Body");
+    expect(plugin.skills[0]?.name).toBe("deploy");
+  });
   it("namespaces skills and turns non-always rules into skills", () => {
     expect(toSkillInfo(plugin)).toEqual([
       {
         content: "Body",
         description: "Does things.",
         id: "demo:deploy",
-        name: "deploy",
+        name: "demo:deploy",
         path: "/plugins/demo/skills/deploy/SKILL.md",
       },
       {
         content: "Prefer named exports.",
         description: "Export style (applies to **/*.ts)",
         id: "demo:rule-exports",
-        name: "rule-exports",
+        name: "demo:rule-exports",
         path: "/plugins/demo/rules/exports.mdc",
       },
     ]);

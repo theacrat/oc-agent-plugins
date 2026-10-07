@@ -46,7 +46,7 @@ const toSkillInfo = (plugin: AgentPlugin): Skill.Info[] => [
   ...plugin.skills.map((skill) =>
     makeSkill(
       skillID(plugin, skill.name),
-      skill.name,
+      skillID(plugin, skill.name),
       skill.description,
       skill.path,
       skill.content,
@@ -58,7 +58,7 @@ const toSkillInfo = (plugin: AgentPlugin): Skill.Info[] => [
     .map((rule) =>
       makeSkill(
         skillID(plugin, ruleSkillName(rule)),
-        ruleSkillName(rule),
+        skillID(plugin, ruleSkillName(rule)),
         ruleDescription(rule),
         rule.path,
         rule.content,

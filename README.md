@@ -2,6 +2,8 @@
 
 An OpenCode v2 plugin that loads [Agent Plugins](https://agent-plugins.org/) 1.0.0 packages, plus Claude Code, Codex and Cursor plugins. Their skills, MCP servers, commands, rules and agents show up in OpenCode as if you'd configured them by hand. Each format and each component type can be turned off.
 
+Plugin skill IDs and displayed names use `<plugin>:<skill>`. Rule-backed skills use `<plugin>:rule-<rule>`. OpenCode's skill registry has no separate owner tag; prefixes make the origin visible without changing the vendor skill's source or content.
+
 ## Install
 
 ### Manage vendor packages with npx
