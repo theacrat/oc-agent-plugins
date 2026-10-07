@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -90,6 +91,154 @@ afterEach(async () => {
 });
 
 describe("manager store", () => {
+  it("cleans identity-changing update stages and preserves the previous installation", async () => {
+    await install(root, source, deps);
+    await writeFile(
+      join(source.directory, "manifest.json"),
+      JSON.stringify({ format: "claude", manifest: { name: "other" } }),
+    );
+    await expect(update(root, "demo", source, deps)).rejects.toThrow(
+      "cannot change plugin name or format",
+    );
+    const diagnostics = await doctor(root, deps);
+    expect(diagnostics.problems).toEqual([]);
+    expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("first");
+  });
+
+  it("retains a partial stage if interrupted-operation metadata appears", async () => {
+    const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+    let stage: string | undefined;
+    await expect(
+      install(root, source, {
+        ...deps,
+        snapshotDirectory: async (_from, to) => {
+          stage = to;
+          await writeFile(join(to, "partial"), "retained");
+          await writeFile(join(state, "journal.json"), "interrupted");
+          throw new Error("interrupted copier");
+        },
+      }),
+    ).rejects.toThrow("interrupted copier");
+    if (!stage) {
+      throw new Error("Missing test stage");
+    }
+    expect(await readFile(join(stage, "partial"), "utf8")).toBe("retained");
+    expect(await readFile(join(state, "journal.json"), "utf8")).toBe("interrupted");
+  });
+
+  it.each([false, true])(
+    "cleans invalid manifests before receipt creation (update=%s)",
+    async (updating) => {
+      if (updating) {
+        await install(root, source, deps);
+      }
+      await writeFile(join(source.directory, "manifest.json"), "invalid manifest");
+      await expect(
+        updating ? update(root, "demo", source, deps) : install(root, source, deps),
+      ).rejects.toThrow("supported plugin manifest");
+      const diagnostics = await doctor(root, deps);
+      expect(diagnostics.problems).toEqual([]);
+      if (updating) {
+        expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("first");
+      }
+      await writeFile(
+        join(source.directory, "manifest.json"),
+        JSON.stringify({ format: "agent-plugins", manifest: { name: "demo", version: "2" } }),
+      );
+      await (updating ? update(root, "demo", source, deps) : install(root, source, deps));
+    },
+  );
+
+  it("cleans asynchronous partial copier failures and permits subsequent updates", async () => {
+    await install(root, source, deps);
+    await expect(
+      update(root, "demo", source, {
+        ...deps,
+        snapshotDirectory: async (from, to) => {
+          await mkdir(join(to, "partial"));
+          await cp(join(from, "payload.txt"), join(to, "partial", "payload"));
+          throw new Error("copy failed");
+        },
+      }),
+    ).rejects.toThrow("copy failed");
+    const diagnostics = await doctor(root, deps);
+    expect(diagnostics.problems).toEqual([]);
+    expect(await readFile(join(root, "demo", "payload.txt"), "utf8")).toBe("first");
+    await update(root, "demo", source, deps);
+  });
+
+  it("cleans rejected symlinks without traversing their external targets", async () => {
+    const external = join(directory, "external");
+    await mkdir(external);
+    await writeFile(join(external, "user-data"), "preserve");
+    await expect(
+      install(root, source, {
+        ...deps,
+        snapshotDirectory: async (_from, to) => {
+          await symlink(external, join(to, "escape"));
+        },
+      }),
+    ).rejects.toThrow("Unsafe payload");
+    expect(await readFile(join(external, "user-data"), "utf8")).toBe("preserve");
+    const diagnostics = await doctor(root, deps);
+    expect(diagnostics.problems).toEqual([]);
+    await install(root, source, deps);
+  });
+
+  it.each([false, true])("preserves external replacement stages (symlink=%s)", async (link) => {
+    const external = join(directory, "external");
+    await mkdir(external);
+    await writeFile(join(external, "user-data"), "preserve");
+    let stage: string | undefined;
+    let replacementInode: number | undefined;
+    await expect(
+      install(root, source, {
+        ...deps,
+        snapshotDirectory: async (_from, to) => {
+          stage = to;
+          await rename(to, join(directory, "original-stage"));
+          if (link) {
+            await symlink(external, to);
+          } else {
+            await mkdir(to);
+            await writeFile(join(to, "user-data"), "replacement");
+          }
+          const stat = await lstat(to);
+          replacementInode = stat.ino;
+          throw new Error("copy failed after replacement");
+        },
+      }),
+    ).rejects.toThrow("Staging directory replaced");
+    if (!stage) {
+      throw new Error("Missing test stage");
+    }
+    const stat = await lstat(stage);
+    expect(stat.ino).toBe(replacementInode);
+    expect(await readFile(join(external, "user-data"), "utf8")).toBe("preserve");
+    if (!link) {
+      expect(await readFile(join(stage, "user-data"), "utf8")).toBe("replacement");
+    }
+  });
+
+  it("rejects a successful copier that replaces its stage", async () => {
+    let stage: string | undefined;
+    await expect(
+      install(root, source, {
+        ...deps,
+        snapshotDirectory: async (from, to) => {
+          stage = to;
+          await rename(to, join(directory, "original-stage"));
+          await cp(from, to, { recursive: true });
+        },
+      }),
+    ).rejects.toThrow("Staging directory replaced");
+    if (!stage) {
+      throw new Error("Missing test stage");
+    }
+    expect(await readFile(join(stage, "payload.txt"), "utf8")).toBe("first");
+    expect(await readdir(root)).toEqual([]);
+  });
+
   it("rejects stale acquisitions after reinstalling from a different source", async () => {
     const original = await install(root, source, deps);
     await removeInstallation(root, "demo", deps);
