@@ -62,6 +62,7 @@ const parseOptions = (input: OptionsInput, report: Report): Options => {
     searchPaths: [
       path.join(home, ".agents", "plugins"),
       path.join(project, ".agents", "plugins"),
+      path.join(project, ".opencode", "agent-plugins"),
       ...(settings.paths ?? []).map((entry) => path.resolve(project, expandHome(entry, home))),
     ],
     shellInjection: settings.shellInjection !== false,

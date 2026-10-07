@@ -361,6 +361,7 @@ describe("format precedence and toggles", () => {
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
       "/p/.agents/plugins",
+      "/p/.opencode/agent-plugins",
       "/home/u/plugins",
       "/p/rel",
     ]);

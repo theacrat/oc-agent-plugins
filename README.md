@@ -47,7 +47,19 @@ Unknown fields are reported with their full path. Malformed nested settings reje
 
 ## Where plugins are found
 
-The search paths are `~/.agents/plugins`, `<project>/.agents/plugins`, everything in `discovery.paths`.
+The search paths are `~/.agents/plugins`, `<project>/.agents/plugins`, `<project>/.opencode/agent-plugins`, and everything in `discovery.paths`. Existing first-found name precedence is unchanged.
+
+### Project-only installation
+
+Put portable, Claude, Codex or Cursor packages in `.opencode/agent-plugins/` to make them available only in that project:
+
+```sh
+git clone https://github.com/cloudflare/skills .opencode/agent-plugins/cloudflare
+```
+
+No global installation or extra discovery setting is needed. The adapter itself must still be loaded by OpenCode, either globally or from the project's `opencode.json(c)` plugin entry.
+
+Do not confuse this directory with `.opencode/plugins/` or `~/.config/opencode/plugins/`: OpenCode loads native executable plugins from those locations. This adapter discovers vendor packages from `.opencode/agent-plugins/` without importing their manifests as native OpenCode code.
 
 Each search path can be any of these:
 

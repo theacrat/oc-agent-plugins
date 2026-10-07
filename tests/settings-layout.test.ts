@@ -45,6 +45,7 @@ describe("grouped public settings", () => {
     expect(options.searchPaths).toEqual([
       "/home/u/.agents/plugins",
       "/project/.agents/plugins",
+      "/project/.opencode/agent-plugins",
       "/home/u/plugins",
     ]);
     expect(options.dataRoot).toBe("/project/plugin-data");
@@ -93,7 +94,11 @@ describe("grouped public settings", () => {
 
   it("does not discover vendor directories", () => {
     const { diagnostics, options } = parse({ discovery: { vendorDirs: true } });
-    expect(options.searchPaths).toEqual(["/home/u/.agents/plugins", "/project/.agents/plugins"]);
+    expect(options.searchPaths).toEqual([
+      "/home/u/.agents/plugins",
+      "/project/.agents/plugins",
+      "/project/.opencode/agent-plugins",
+    ]);
     expect(diagnostics.map((entry) => entry.message)).toEqual([
       'unknown option "discovery.vendorDirs"',
     ]);
