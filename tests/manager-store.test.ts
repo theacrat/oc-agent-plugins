@@ -2,6 +2,7 @@ import {
   cp,
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -11,7 +12,7 @@ import {
 } from "node:fs/promises";
 import nodePath from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { validateSource } from "#src/manager/paths.ts";
 import { validateReceipt } from "#src/manager/receipt.ts";
@@ -30,6 +31,17 @@ import { RECEIPT } from "#src/manager/types.ts";
 import { makeTempDir } from "./fixture.ts";
 
 const { join } = nodePath;
+const nativePlatform = process.platform;
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<{ open: typeof open }>();
+  return { ...original, open: vi.fn(original.open) };
+});
+
+async function directoryLink(target: string, destination: string): Promise<void> {
+  await symlink(target, destination, nativePlatform === "win32" ? "junction" : "dir");
+}
 
 let directory: string;
 let root: string;
@@ -88,10 +100,116 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.mocked(open).mockReset();
+  if (platformDescriptor) {
+    Object.defineProperty(process, "platform", platformDescriptor);
+  }
   await rm(directory, { force: true, recursive: true });
 });
 
-describe("manager store", () => {
+describe.each(["native", "windows fallback"])("manager store (%s)", (mode) => {
+  beforeEach(async () => {
+    const original = await vi.importActual<{ open: typeof open }>("node:fs/promises");
+    vi.mocked(open).mockImplementation(async (...args) => {
+      if (mode === "windows fallback" && nodePath.basename(String(args[0])).startsWith("stage-")) {
+        throw Object.assign(new Error("Windows directory open unsupported"), {
+          code: "EPERM",
+          path: args[0],
+          syscall: "open",
+        });
+      }
+      return original.open(...args);
+    });
+    if (mode === "windows fallback") {
+      Object.defineProperty(process, "platform", { configurable: true, get: () => "win32" });
+    }
+  });
+
+  it.each(["EPERM", "EISDIR", "EACCES"])(
+    "uses identity ownership only for Windows directory open %s",
+    async (code) => {
+      vi.mocked(open).mockImplementation(async (filename) => {
+        await Promise.resolve();
+        throw Object.assign(new Error("directory open failed"), {
+          code,
+          path: filename,
+          syscall: "open",
+        });
+      });
+      if (process.platform === "win32") {
+        const installed = await install(root, source, deps);
+        expect(installed.managed).toBe(true);
+      } else {
+        await expect(install(root, source, deps)).rejects.toThrow("directory open failed");
+        expect(await readdir(root)).toEqual([]);
+      }
+      const diagnostics = await doctor(root, deps);
+      expect(diagnostics.problems).toEqual([]);
+    },
+  );
+
+  it.each(["EIO", "ENOENT", "EMFILE", "wrong syscall", "wrong path", "missing context"])(
+    "rejects unrelated stage open failures (%s) and cleans its private stage",
+    async (failure) => {
+      let copied = false;
+      vi.mocked(open).mockImplementation(async (filename) => {
+        await Promise.resolve();
+        throw Object.assign(
+          new Error("unrelated open failure"),
+          failure === "missing context"
+            ? { code: "EPERM" }
+            : {
+                code: failure.startsWith("E") ? failure : "EPERM",
+                path: failure === "wrong path" ? source.directory : filename,
+                syscall: failure === "wrong syscall" ? "stat" : "open",
+              },
+        );
+      });
+      await expect(
+        install(root, source, {
+          ...deps,
+          snapshotDirectory: async () => {
+            copied = true;
+            await Promise.resolve();
+          },
+        }),
+      ).rejects.toThrow("unrelated open failure");
+      expect(copied).toBe(false);
+      expect(await readdir(root)).toEqual([]);
+      const diagnostics = await doctor(root, deps);
+      expect(diagnostics.problems).toEqual([]);
+    },
+  );
+
+  it("preserves an identical validated snapshot replacing the owned stage", async () => {
+    const state = join(nodePath.dirname(root), ".agent-plugins-manager");
+    let replacement: string | undefined;
+    await expect(
+      install(root, source, {
+        ...deps,
+        boundary: async (boundary) => {
+          if (boundary !== "staged") {
+            return;
+          }
+          const entries = await readdir(state);
+          const name = entries.find((entry) => entry.startsWith("stage-"));
+          if (!name) {
+            throw new Error("Missing test stage");
+          }
+          replacement = join(state, name);
+          const original = join(directory, "original-stage");
+          await rename(replacement, original);
+          await cp(original, replacement, { recursive: true });
+        },
+      }),
+    ).rejects.toThrow("Staging directory replaced");
+    if (!replacement) {
+      throw new Error("Missing test replacement");
+    }
+    expect(await readFile(join(replacement, "payload.txt"), "utf8")).toBe("first");
+    expect(await readFile(join(replacement, RECEIPT), "utf8")).toContain('"schemaVersion": 1');
+    expect(await readdir(root)).toEqual([]);
+  });
   it.each(["payload", "receipt"] as const)(
     "retains validated stage %s edits after a staged-boundary failure",
     async (change) => {
@@ -219,7 +337,7 @@ describe("manager store", () => {
       install(root, source, {
         ...deps,
         snapshotDirectory: async (_from, to) => {
-          await symlink(external, join(to, "escape"));
+          await directoryLink(external, join(to, "escape"));
         },
       }),
     ).rejects.toThrow("Unsafe payload");
@@ -242,7 +360,7 @@ describe("manager store", () => {
           stage = to;
           await rename(to, join(directory, "original-stage"));
           if (link) {
-            await symlink(external, to);
+            await directoryLink(external, to);
           } else {
             await mkdir(to);
             await writeFile(join(to, "user-data"), "replacement");
@@ -510,10 +628,19 @@ describe("manager store", () => {
   it("rejects traversal, symlink scopes and overlapping source", async () => {
     await expect(removeInstallation(root, "../demo", deps)).rejects.toThrow("Unsafe plugin name");
     await mkdir(join(directory, "project"));
-    await symlink(source.directory, join(directory, "project", ".opencode"));
+    await directoryLink(source.directory, join(directory, "project", ".opencode"));
     await expect(install(root, source, deps)).rejects.toThrow("Unsafe directory");
     await rm(join(directory, "project", ".opencode"));
     await expect(install(root, { ...source, directory }, deps)).rejects.toThrow("overlap");
+  });
+
+  it("rejects a directory link used as the store root", async () => {
+    await mkdir(nodePath.dirname(root), { recursive: true });
+    await directoryLink(source.directory, root);
+    await expect(install(root, source, deps)).rejects.toThrow("Unsafe directory");
+    expect(await readFile(join(source.directory, "payload.txt"), "utf8")).toBe("first");
+    const entries = await readdir(source.directory);
+    expect(entries.toSorted()).toEqual(["manifest.json", "payload.txt"]);
   });
 
   it("does not persist credential-bearing Git references", async () => {
@@ -603,7 +730,7 @@ describe("manager store", () => {
     await expect(removeInstallation(root, "demo", deps)).rejects.toThrow("Unsafe payload");
     const alternate = join(directory, "alternate", "agent-plugins");
     await mkdir(join(directory, "alternate"));
-    await symlink(source.directory, join(directory, "alternate", ".agent-plugins-manager"));
+    await directoryLink(source.directory, join(directory, "alternate", ".agent-plugins-manager"));
     await expect(install(alternate, source, deps)).rejects.toThrow("Unsafe directory");
   });
 

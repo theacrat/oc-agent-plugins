@@ -1,10 +1,11 @@
-import { lstat, mkdtemp, open, readdir, rm } from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { withLock } from "./lock.ts";
 import {
+  checkStage,
   exists,
+  openStage,
   safeDirectory,
   stateInventory,
   storePaths,
@@ -12,6 +13,7 @@ import {
   validateSource,
   validateTree,
 } from "./paths.ts";
+import type { StageOwner } from "./paths.ts";
 import { assertUpdateReceipt, readReceipt, writeReceipt } from "./receipt.ts";
 import { transact } from "./transaction.ts";
 import { RECEIPT } from "./types.ts";
@@ -162,21 +164,11 @@ async function stagedReceipt(
   return receipt;
 }
 
-async function checkStage(stage: string, handle: FileHandle): Promise<void> {
-  await safeDirectory(path.dirname(stage));
-  const original = await handle.stat();
-  const current = await lstat(stage);
-  const sameIdentity = current.dev === original.dev && current.ino === original.ino;
-  if (!current.isDirectory() || !sameIdentity) {
-    throw new Error(`Staging directory replaced; retained for inspection: ${stage}`);
-  }
-}
-
-async function cleanupStage(stage: string, handle: FileHandle): Promise<void> {
+async function cleanupStage(stage: string, owner: StageOwner): Promise<void> {
   if (!(await exists(stage))) {
     return;
   }
-  await checkStage(stage, handle);
+  await checkStage(stage, owner);
   // Only this exact mkdtemp directory is owned. rm unlinks nested symlinks, never their targets.
   await rm(stage, { recursive: true });
 }
@@ -190,17 +182,20 @@ async function stageSource(
   const { state } = storePaths(root);
   await validateSource(acquired.directory, Object.values(storePaths(root)));
   const stage = await mkdtemp(join(state, "stage-"));
-  const handle = await open(stage, "r");
+  let owner: StageOwner = { identity: await lstat(stage), kind: "identity" };
   let receipt: Receipt | undefined;
   try {
+    owner = await openStage(stage, owner.identity);
+    await checkStage(stage, owner);
     await deps.snapshotDirectory(acquired.directory, stage);
-    await checkStage(stage, handle);
+    await checkStage(stage, owner);
     receipt = await stagedReceipt(stage, acquired, deps, previous);
     await deps.boundary?.("staged");
-    await checkStage(stage, handle);
+    await checkStage(stage, owner);
     return { receipt, stage };
   } catch (error) {
     if (!(await exists(join(state, "journal.json")))) {
+      await checkStage(stage, owner);
       if (receipt) {
         const snapshot = await assessSnapshot(stage, deps);
         assertUpdateReceipt(snapshot.receipt, receipt.source, receipt);
@@ -210,11 +205,13 @@ async function stageSource(
           });
         }
       }
-      await cleanupStage(stage, handle);
+      await cleanupStage(stage, owner);
     }
     throw error;
   } finally {
-    await handle.close();
+    if (owner.kind === "handle") {
+      await owner.handle.close();
+    }
   }
 }
 
