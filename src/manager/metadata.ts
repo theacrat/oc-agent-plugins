@@ -20,7 +20,7 @@ const readMetadata = async (directory: string): Promise<PluginMetadata> => {
       if (!stat.isDirectory() || (await realpath(parent)) !== parent) {
         throw new Error(`Unsafe manifest directory: ${parent}`);
       }
-      const content = await readRegularFile(path.join(parent, "plugin.json"));
+      const content = await readRegularFile(path.join(parent, "plugin.json"), root);
       const text = content.toString("utf8");
       const parsed =
         format === "agent-plugins" ? parseManifest(text) : parseVendorManifest(text, undefined);

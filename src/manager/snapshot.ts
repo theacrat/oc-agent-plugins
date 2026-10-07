@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import pathModule from "node:path";
 
+import { openContainedFile } from "#src/manager/contained-read.ts";
 import { forEachSequential } from "#src/manager/sequence.ts";
 import { RECEIPT } from "#src/manager/types.ts";
 
@@ -17,11 +18,11 @@ interface DirectoryFile {
   readonly executable: number;
 }
 
-const ignoredEntry = (name: string, rejectReceipt: boolean): boolean => {
+const ignoredEntry = (name: string, rejectReceipt: boolean, rootEntry: boolean): boolean => {
   if (name === RECEIPT && rejectReceipt) {
     throw new Error("Source contains reserved receipt");
   }
-  return EXCLUDED.has(name) || name === RECEIPT;
+  return rejectReceipt ? EXCLUDED.has(name) : name === RECEIPT && rootEntry;
 };
 
 const executableBits = (mode: number): number =>
@@ -46,10 +47,13 @@ const safeRelativePath = (path: string): boolean =>
   ) &&
   path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 
-const readRegularFile = async (path: string): Promise<Buffer> => {
+const readRegularFile = async (path: string, root?: string): Promise<Buffer> => {
   // O_NOFOLLOW is combined with read-only flags to reject a raced-in final symlink.
-  // eslint-disable-next-line eslint/no-bitwise
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle =
+    root === undefined
+      ? // eslint-disable-next-line eslint/no-bitwise
+        await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+      : await openContainedFile(path, root);
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
@@ -107,7 +111,7 @@ const directoryFiles = async (
       if (entries > MAX_FILES) {
         throw new Error("Source exceeds file count limit");
       }
-      if (ignoredEntry(name, rejectReceipt)) {
+      if (ignoredEntry(name, rejectReceipt, depth === 0)) {
         return;
       }
       const child = pathModule.join(path, name);
@@ -124,7 +128,7 @@ const directoryFiles = async (
         files.push({ content: Buffer.alloc(0), executable: 0, kind: "directory", path: childPath });
         await walk(child, depth + 1);
       } else {
-        const content = await readRegularFile(child);
+        const content = await readRegularFile(child, root);
         totalBytes += content.length;
         if (totalBytes > MAX_BYTES) {
           throw new Error("Source exceeds size limit");

@@ -1,6 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { acquireGitSource } from "#src/manager/git.ts";
 import { EXCLUDED, safeRelativePath } from "#src/manager/snapshot.ts";
@@ -45,7 +44,7 @@ const validateGitSource = (source: Extract<Source, { kind: "git" }>): void => {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error(`Unsupported Git URL: ${url}`);
+    throw new Error("Unsupported Git URL");
   }
   if (
     !["https:", "ssh:", "file:"].includes(parsed.protocol) ||
@@ -55,7 +54,7 @@ const validateGitSource = (source: Extract<Source, { kind: "git" }>): void => {
     parsed.hash !== "" ||
     /[\s\0\\]/u.test(url)
   ) {
-    throw new Error(`Unsafe Git URL: ${url}`);
+    throw new Error("Unsafe Git URL");
   }
   if (parsed.protocol === "file:" && parsed.hostname !== "" && parsed.hostname !== "localhost") {
     throw new Error("File Git URLs must refer to the local host");
@@ -100,7 +99,7 @@ const parseSource = async (input: string, options: SourceOptions): Promise<Sourc
   };
   validateGitSource(source);
   if (url.startsWith("file:")) {
-    await realpath(fileURLToPath(url));
+    throw new Error("Public Git sources require HTTPS or SSH transport");
   }
   return source;
 };

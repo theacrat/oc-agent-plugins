@@ -11,10 +11,13 @@ import { fingerprintDirectory } from "#src/manager/fingerprint.ts";
 import { readMetadata } from "#src/manager/metadata.ts";
 import { snapshotDirectory } from "#src/manager/snapshot.ts";
 import { acquireSource, parseSource } from "#src/manager/source.ts";
+import type { Source } from "#src/manager/types.ts";
 
 const RECEIPT = ".oc-agent-plugin.json";
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const { join } = pathModule;
+
+vi.mock("node:fs/promises", { spy: true });
 
 const temporary: string[] = [];
 const fixture = async (): Promise<string> => {
@@ -53,6 +56,7 @@ const runGit = async (directory: string, args: readonly string[]): Promise<strin
 };
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(
     temporary.splice(0).map(async (path) => rm(path, { force: true, recursive: true })),
@@ -60,6 +64,59 @@ afterEach(async () => {
 });
 
 describe("manager sources", () => {
+  it("fingerprints installed additions even in acquisition-excluded locations", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "plugin.json"), manifest);
+    const baseline = await fingerprintDirectory(root);
+    for (const name of [".git", "node_modules", "nested"]) {
+      const directory = join(root, name);
+      // Each case restores the same baseline before the next mutation.
+      // eslint-disable-next-line eslint/no-await-in-loop
+      await mkdir(directory);
+      // eslint-disable-next-line eslint/no-await-in-loop
+      await writeFile(join(directory, RECEIPT), "user-added");
+      // eslint-disable-next-line eslint/no-await-in-loop
+      expect(await fingerprintDirectory(root)).not.toBe(baseline);
+      // eslint-disable-next-line eslint/no-await-in-loop
+      await rm(directory, { recursive: true });
+    }
+    await writeFile(join(root, RECEIPT), "manager-owned");
+    expect(await fingerprintDirectory(root)).toBe(baseline);
+  });
+
+  it("redacts credential URLs and rejects public file transport", async () => {
+    const root = await fixture();
+    const rejected = parseSource("https://alice:SECRET@example.com/repo.git", { cwd: root });
+    await expect(rejected).rejects.toThrow("Unsafe Git URL");
+    await expect(rejected).rejects.not.toThrow("SECRET");
+    await expect(parseSource("file:///secretpath", { cwd: root })).rejects.toThrow(
+      "require HTTPS or SSH",
+    );
+  });
+
+  it("rejects a parent symlink swapped in at the actual file open", async () => {
+    const root = await fixture();
+    const source = join(root, "source");
+    const parent = join(source, "nested");
+    const outside = join(root, "outside");
+    await mkdir(parent, { recursive: true });
+    await mkdir(outside);
+    await writeFile(join(parent, "data"), "safe");
+    await writeFile(join(outside, "data"), "EXTERNAL_SECRET");
+    const filesystem = await import("node:fs/promises");
+    const actual = await vi.importActual<typeof filesystem>("node:fs/promises");
+    const originalOpen = actual.open;
+    vi.spyOn(filesystem, "open").mockImplementation(async (...args) => {
+      if (args[0] === join(parent, "data")) {
+        await filesystem.rename(parent, join(source, "original"));
+        await symlink(outside, parent);
+      }
+      return originalOpen(...args);
+    });
+    await expect(snapshotDirectory(source, join(root, "copy"))).rejects.toThrow();
+    await expect(readFile(join(root, "copy", "nested", "data"))).rejects.toThrow();
+    vi.mocked(filesystem.open).mockImplementation(originalOpen);
+  });
   it("canonicalises local folders and never deletes them on disposal", async () => {
     const root = await fixture();
     await writeFile(join(root, "plugin.json"), manifest);
@@ -119,7 +176,7 @@ describe("manager sources", () => {
     await snapshotDirectory(source, destination);
     const original = await fingerprintDirectory(destination);
     expect(original).toMatch(/^[a-f0-9]{64}$/u);
-    expect(original).toBe(await fingerprintDirectory(source));
+    expect(original).not.toBe(await fingerprintDirectory(source));
     await writeFile(join(destination, RECEIPT), "receipt");
     expect(await fingerprintDirectory(destination)).toBe(original);
     await chmod(join(destination, "script"), 0o755);
@@ -219,11 +276,12 @@ describe("manager sources", () => {
     await runGit(bare, ["init", "--bare"]);
     await runGit(bare, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await runGit(repository, ["push", bare, "main"]);
-    const source = await parseSource(pathToFileURL(bare).href, {
-      cwd: root,
+    const source: Source = {
+      kind: "git",
       ref: "main",
       subdir: "plugins",
-    });
+      url: pathToFileURL(bare).href,
+    };
     await writeFile(
       join(bare, "config"),
       '[core]\n bare = true\n[filter "malicious"]\n smudge = touch SHOULD_NOT_RUN\n',
@@ -242,11 +300,12 @@ describe("manager sources", () => {
     expect(updated.revision).not.toBe(first);
     expect(await readFile(join(updated.directory, "value"), "utf8")).toBe("two");
     await updated.dispose();
-    const pinned = await parseSource(pathToFileURL(bare).href, {
-      cwd: root,
+    const pinned: Source = {
+      kind: "git",
       ref: first,
       subdir: "plugins",
-    });
+      url: pathToFileURL(bare).href,
+    };
     const old = await acquireSource(pinned, join(root, "scratch"));
     expect(old.revision).toBe(first);
     expect(await readFile(join(old.directory, "value"), "utf8")).toBe("one");
