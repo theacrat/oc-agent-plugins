@@ -1,5 +1,5 @@
 const escapesNext = (text: string, index: number): boolean =>
-  index === text.length - 1 || /[\\"'\s]/u.test(text.charAt(index + 1));
+  index === text.length - 1 || /["'\s]/u.test(text.charAt(index + 1));
 
 const managerArguments = (text: string): string[] => {
   const argv: string[] = [];

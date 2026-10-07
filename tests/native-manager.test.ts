@@ -102,6 +102,7 @@ describe("native manager arguments", () => {
     ["install -- -source", ["install", "--", "-source"]],
     [String.raw`install "C:\Users\name\plugin"`, ["install", String.raw`C:\Users\name\plugin`]],
     [String.raw`install C:\plugins\local`, ["install", String.raw`C:\plugins\local`]],
+    [String.raw`install "\\server\share\plugin"`, ["install", String.raw`\\server\share\plugin`]],
     [
       "$HOME $(touch nope) `cmd` ; | > # literal",
       ["$HOME", "$(touch", "nope)", "`cmd`", ";", "|", ">", "#", "literal"],
