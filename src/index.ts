@@ -6,7 +6,7 @@ import type { Plugin as PluginTypes } from "@opencode/plugin";
 
 import { loadAll } from "#src/loader.ts";
 import { scopeComponents, toAgentInfo, toPolicyServerConfigs, toSkillInfo } from "#src/opencode.ts";
-import { componentsForPlugin, parseOptions } from "#src/options.ts";
+import { componentsForPlugin, configDirectory, parseOptions } from "#src/options.ts";
 import type { Options } from "#src/options.ts";
 import { registerCompatibility } from "#src/runtime/compatibility.ts";
 import { registerMcpPolicies } from "#src/runtime/mcp-policy.ts";
@@ -38,7 +38,7 @@ const readOptions = (ctx: Context) => {
   const diagnostics: Diagnostic[] = [];
   const options = parseOptions(
     {
-      configHome: process.env["XDG_CONFIG_HOME"] ?? path.join(home, ".config"),
+      configDirectory: configDirectory(home, process.env),
       dataHome: process.env["XDG_DATA_HOME"] ?? path.join(home, ".local", "share"),
       home,
       project: ctx.location.project.directory,

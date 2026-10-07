@@ -13,7 +13,7 @@ import {
   toServerConfigs,
   toSkillInfo,
 } from "#src/opencode.ts";
-import { parseOptions } from "#src/options.ts";
+import { configDirectory, parseOptions } from "#src/options.ts";
 import { FORMATS } from "#src/types.ts";
 import type { Diagnostic } from "#src/types.ts";
 
@@ -32,7 +32,7 @@ const main = async () => {
   const diagnostics: Diagnostic[] = [];
   const options = parseOptions(
     {
-      configHome: process.env["XDG_CONFIG_HOME"] ?? path.join(homedir(), ".config"),
+      configDirectory: configDirectory(homedir(), process.env),
       dataHome: path.join(process.cwd(), ".agent-plugins-data"),
       home: homedir(),
       project: process.cwd(),

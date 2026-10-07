@@ -47,11 +47,11 @@ Unknown fields are reported with their full path. Malformed nested settings reje
 
 ## Where plugins are found
 
-The search paths are `~/.agents/plugins`, `$XDG_CONFIG_HOME/opencode/agent-plugins` (default `~/.config/opencode/agent-plugins`), `<project>/.agents/plugins`, `<project>/.opencode/agent-plugins`, and everything in `discovery.paths`. The first plugin found with a given name wins.
+The search paths are `~/.agents/plugins`, `$OPENCODE_CONFIG_DIR/agent-plugins` (fallback `$XDG_CONFIG_HOME/opencode/agent-plugins`, then `~/.config/opencode/agent-plugins`), `<project>/.agents/plugins`, `<project>/.opencode/agent-plugins`, and everything in `discovery.paths`. The first plugin found with a given name wins.
 
 ### Global vendor packages
 
-Put portable, Claude, Codex or Cursor packages in `~/.config/opencode/agent-plugins/` to make them available across projects. If `XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/opencode/agent-plugins/` instead.
+Put portable, Claude, Codex or Cursor packages in `~/.config/opencode/agent-plugins/` to make them available across projects. `OPENCODE_CONFIG_DIR` takes precedence and names the OpenCode directory itself, so use `$OPENCODE_CONFIG_DIR/agent-plugins/` when set. Otherwise `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/opencode/agent-plugins/`, with the normal user config path as the fallback.
 
 ```sh
 git clone https://github.com/cloudflare/skills ~/.config/opencode/agent-plugins/cloudflare

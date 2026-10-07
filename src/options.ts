@@ -37,9 +37,15 @@ interface OptionsInput {
   readonly home: string;
   readonly dataHome: string;
   readonly configHome?: string;
+  readonly configDirectory?: string;
 }
 
 const expandHome = (value: string, home: string) => value.replace(/^~(?=\/|$)/u, home);
+
+// OPENCODE_CONFIG_DIR is the config directory itself; XDG_CONFIG_HOME is its parent.
+const configDirectory = (home: string, env: Readonly<Record<string, string | undefined>>): string =>
+  env["OPENCODE_CONFIG_DIR"] ??
+  path.join(env["XDG_CONFIG_HOME"] ?? path.join(home, ".config"), "opencode");
 
 const parseOptions = (input: OptionsInput, report: Report): Options => {
   const { home, project } = input;
@@ -62,7 +68,11 @@ const parseOptions = (input: OptionsInput, report: Report): Options => {
     formats: new Set(FORMATS.filter((format) => settings.formats[format] !== false)),
     searchPaths: [
       path.join(home, ".agents", "plugins"),
-      path.join(input.configHome ?? path.join(home, ".config"), "opencode", "agent-plugins"),
+      path.join(
+        input.configDirectory ??
+          path.join(input.configHome ?? path.join(home, ".config"), "opencode"),
+        "agent-plugins",
+      ),
       path.join(project, ".agents", "plugins"),
       path.join(project, ".opencode", "agent-plugins"),
       ...(settings.paths ?? []).map((entry) => path.resolve(project, expandHome(entry, home))),
@@ -82,4 +92,4 @@ const commandInjectionForPlugin = (options: Options, name: string) =>
   options.componentOverrides[name]?.shellInjection ?? options.shellInjection;
 
 export type { ComponentOverride, Options, OptionsInput };
-export { commandInjectionForPlugin, componentsForPlugin, parseOptions };
+export { commandInjectionForPlugin, componentsForPlugin, configDirectory, parseOptions };
