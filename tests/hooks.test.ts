@@ -150,6 +150,11 @@ describe("vendor hooks", () => {
     });
     expect(nativeInput(vendorInput(input))).toEqual(input);
     expect(vendorTool("cursor", "bash")).toBe("Shell");
+    expect(vendorTool("claude", "shell")).toBe("Bash");
+    expect(vendorTool("cursor", "shell")).toBe("Shell");
+    expect(vendorTool("claude", "subagent")).toBe("Task");
+    expect(vendorTool("codex", "subagent")).toBe("Agent");
+    expect(vendorTool("codex", "patch")).toBe("apply_patch");
   });
 });
 
@@ -188,11 +193,48 @@ describe("hook decisions and processes", () => {
       report: () => {
         // Diagnostics are tested separately.
       },
+      secretValues: () => ["private-hook-token"],
     });
-    const event = { id: "call", input: { command: "true" }, sessionID: "session", tool: "bash" };
+    const event = { id: "call", input: { command: "true" }, sessionID: "session", tool: "shell" };
     await callbacks.get("execute.before")?.(event);
     enabled = true;
     await expect(callbacks.get("execute.before")?.(event)).rejects.toThrow(/denied/u);
+    for (const matcher of ["Task", "Agent"]) {
+      current = [{ ...shellHook, command: "exit 2", matcher }];
+      // oxlint-disable-next-line eslint/no-await-in-loop -- Mutate the hot-reload fixture only after the previous invocation completes.
+      await expect(
+        callbacks.get("execute.before")?.({ ...event, tool: "subagent" }),
+      ).rejects.toThrow(/denied/u);
+    }
+    current = [{ ...shellHook, command: "exit 2", matcher: "Bash" }];
+    await expect(callbacks.get("execute.before")?.(event)).rejects.toThrow(/denied/u);
+    for (const output of [
+      "invalid",
+      '{"hookSpecificOutput":false}',
+      '{"continue":"false"}',
+      '{"permission":"deny"}',
+      '{"hookSpecificOutput":{"permissionDecision":"ask"}}',
+    ]) {
+      current = [{ ...shellHook, args: ["%s", output], command: "printf", matcher: "Bash" }];
+      // oxlint-disable-next-line eslint/no-await-in-loop -- Mutate the hot-reload fixture only after the previous invocation completes.
+      await expect(callbacks.get("execute.before")?.(event)).rejects.toThrow(/failed closed/u);
+    }
+    current = [{ ...shellHook, command: "exit 2", matcher: "Edit" }];
+    await expect(callbacks.get("execute.before")?.({ ...event, tool: "patch" })).rejects.toThrow(
+      /failed closed/u,
+    );
+    current = [
+      {
+        ...shellHook,
+        args: ["%s", '{"hookSpecificOutput":{"additionalContext":"private-hook-token"}}'],
+        command: "printf",
+        matcher: "Bash",
+      },
+    ];
+    await callbacks.get("execute.before")?.(event);
+    const context = { sessionID: "session", system: [] };
+    await callbacks.get("context")?.(context);
+    expect(context.system).toEqual([{ text: "[redacted]", type: "text" }]);
     current = [];
     await callbacks.get("execute.before")?.(event);
     await cleanup();
