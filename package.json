@@ -1,6 +1,6 @@
 {
   "name": "oc-agent-plugins",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Load Agent Plugins, Claude Code, Codex and Cursor packages in OpenCode v2, with skills, agents, MCP servers, commands, rules, opt-in hooks and monitors, and output styles.",
   "keywords": [
     "agent-plugins",
