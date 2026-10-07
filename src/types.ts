@@ -1,6 +1,13 @@
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 
+// Detection order: the first enabled format with a manifest claims a directory.
+const FORMATS = ["agent-plugins", "claude", "codex", "cursor"] as const;
+type Format = (typeof FORMATS)[number];
+
+const COMPONENTS = ["skills", "mcp", "commands", "rules"] as const;
+type Component = (typeof COMPONENTS)[number];
+
 interface Diagnostic {
   readonly severity: "error" | "warning";
   readonly source: string;
@@ -29,6 +36,29 @@ interface PluginSkill {
   readonly description: string;
   readonly path: string;
   readonly content: string;
+  // false hides the skill from the model's list (Claude's `disable-model-invocation: true`).
+  readonly autoinvoke?: boolean;
+}
+
+// `claude` follows Claude Code: 0-based `$N`, `$ARGUMENTS[N]`, named `arguments`, `!`cmd`` injection.
+// `plain` follows OpenCode's own Markdown commands: `$ARGUMENTS` and 1-based `$N`.
+type CommandSyntax = "claude" | "plain";
+
+interface PluginCommand {
+  readonly name: string;
+  readonly description?: string;
+  readonly template: string;
+  readonly syntax: CommandSyntax;
+  readonly arguments: readonly string[];
+}
+
+interface PluginRule {
+  readonly name: string;
+  readonly description?: string;
+  readonly alwaysApply: boolean;
+  readonly globs: readonly string[];
+  readonly path: string;
+  readonly content: string;
 }
 
 interface StdioServer {
@@ -48,11 +78,14 @@ interface StreamableHttpServer {
 type PluginServer = StdioServer | StreamableHttpServer;
 
 interface AgentPlugin {
+  readonly format: Format;
   readonly manifest: Manifest;
   readonly root: string;
   readonly dataDir: string;
   readonly skills: readonly PluginSkill[];
   readonly servers: Readonly<Record<string, PluginServer>>;
+  readonly commands: readonly PluginCommand[];
+  readonly rules: readonly PluginRule[];
 }
 
 interface LoadResult {
@@ -60,15 +93,23 @@ interface LoadResult {
   readonly diagnostics: readonly Diagnostic[];
 }
 
+type Report = (diagnostic: Diagnostic) => void;
+
 export type {
-  Diagnostic,
+  AgentPlugin,
   Author,
+  CommandSyntax,
+  Component,
+  Diagnostic,
+  Format,
+  LoadResult,
   Manifest,
+  PluginCommand,
+  PluginRule,
+  PluginServer,
   PluginSkill,
+  Report,
   StdioServer,
   StreamableHttpServer,
-  PluginServer,
-  AgentPlugin,
-  LoadResult,
 };
-export { PLUGIN_SCHEMA, MCP_SCHEMA };
+export { COMPONENTS, FORMATS, MCP_SCHEMA, PLUGIN_SCHEMA };

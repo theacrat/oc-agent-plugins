@@ -2,69 +2,149 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { Plugin } from "@opencode/plugin";
+import type { Plugin as PluginTypes } from "@opencode/plugin";
 
-import { isStringArray } from "@/json.ts";
-import { loadAll } from "@/loader.ts";
-import { formatStatus, toServerConfigs, toSkillInfo } from "@/opencode.ts";
-import type { LoadResult } from "@/types.ts";
+import { forwardAttachments } from "#src/attachments.ts";
+import { loadAll } from "#src/loader.ts";
+import {
+  alwaysRules,
+  formatStatus,
+  scopeComponents,
+  toCommands,
+  toServerConfigs,
+  toSkillInfo,
+} from "#src/opencode.ts";
+import { parseOptions } from "#src/options.ts";
+import type { Options } from "#src/options.ts";
+import { describeInjections, injectShell, shellRunner } from "#src/shell.ts";
+import { renderCommand } from "#src/template.ts";
+import type { Rendered } from "#src/template.ts";
+import type { Diagnostic, LoadResult } from "#src/types.ts";
 
-const dataHome = () => process.env["XDG_DATA_HOME"] ?? path.join(homedir(), ".local", "share");
+type Context = PluginTypes.Context;
 
-const expandHome = (value: string) => value.replace(/^~(?=\/|$)/u, homedir());
+// Transforms replay on reload, so they read the latest load through this holder.
+interface State {
+  current: LoadResult;
+}
 
-const logDiagnostics = (result: LoadResult) => {
-  for (const diagnostic of result.diagnostics) {
+const logDiagnostics = (diagnostics: readonly Diagnostic[]) => {
+  for (const diagnostic of diagnostics) {
     console.warn(
       `[agent-plugins] ${diagnostic.severity}: ${diagnostic.source}: ${diagnostic.message}`,
     );
   }
 };
 
-export default Plugin.define({
-  id: "agent-plugins",
-  async setup(ctx) {
-    const project = ctx.location.project.directory;
-    const { dataDir, paths } = ctx.options;
-    const searchPaths = [
-      path.join(homedir(), ".agents", "plugins"),
-      path.join(project, ".agents", "plugins"),
-      ...(isStringArray(paths)
-        ? paths.map((entry) => path.resolve(project, expandHome(entry)))
-        : []),
-    ];
-    const dataRoot =
-      typeof dataDir === "string"
-        ? path.resolve(project, expandHome(dataDir))
-        : path.join(dataHome(), "opencode", "agent-plugins");
+const readOptions = (ctx: Context) => {
+  const home = homedir();
+  const diagnostics: Diagnostic[] = [];
+  const options = parseOptions(
+    {
+      dataHome: process.env["XDG_DATA_HOME"] ?? path.join(home, ".local", "share"),
+      home,
+      project: ctx.location.project.directory,
+      raw: ctx.options,
+    },
+    (diagnostic) => {
+      diagnostics.push(diagnostic);
+    },
+  );
+  return { diagnostics, options };
+};
 
-    let state = await loadAll(searchPaths, { dataRoot });
-    logDiagnostics(state);
-
+const registerSkillsAndMcp = async (ctx: Context, options: Options, state: State) => {
+  const { components } = options;
+  if (components.has("skills") || components.has("rules")) {
     await ctx.skill.transform((editor) => {
-      for (const skill of state.plugins.flatMap(toSkillInfo)) {
+      for (const skill of state.current.plugins.flatMap(toSkillInfo)) {
         editor.add(skill);
       }
     });
+  }
+  if (components.has("mcp")) {
     await ctx.mcp.transform((editor) => {
-      for (const [name, config] of state.plugins.flatMap(toServerConfigs)) {
+      for (const [name, config] of state.current.plugins.flatMap(toServerConfigs)) {
         editor.set(name, config);
       }
     });
-    await ctx.command.transform((editor) => {
-      editor.add({
-        description: "Rescan Agent Plugins and show what loaded",
-        async execute({ sessionID }) {
-          state = await loadAll(searchPaths, { dataRoot });
-          logDiagnostics(state);
-          await Promise.all([ctx.skill.reload(), ctx.mcp.reload()]);
-          await ctx.session.synthetic({
-            resume: false,
-            sessionID,
-            text: formatStatus(state, searchPaths),
-          });
-        },
-        name: "agent-plugins",
-      });
+  }
+  if (components.has("rules")) {
+    // Always-on rules apply to every agent-loop request, like Cursor's alwaysApply.
+    await ctx.session.hook("context", (event) => {
+      for (const text of state.current.plugins.flatMap(alwaysRules)) {
+        event.system.push({ text, type: "text" });
+      }
     });
+  }
+};
+
+const runShell = shellRunner(process.env["SHELL"] ?? "/bin/sh");
+
+const registerCommands = async (
+  ctx: Context,
+  options: Options,
+  state: State,
+  reload: () => Promise<void>,
+) => {
+  // Only Claude-format templates contain `!`cmd`` injections; others render with an empty list.
+  const expandShell = async (rendered: Rendered, sessionID: string) => {
+    if (rendered.shell.length === 0 || !options.shellInjection) {
+      return describeInjections(rendered);
+    }
+    const session = await ctx.session.get({ sessionID });
+    return injectShell(rendered, session.location.directory, AbortSignal.timeout(60_000), runShell);
+  };
+  await ctx.command.transform((editor) => {
+    editor.add({
+      description: "Rescan Agent Plugins and show what loaded",
+      async execute({ sessionID }) {
+        await reload();
+        await ctx.session.synthetic({
+          resume: false,
+          sessionID,
+          text: formatStatus(state.current, options.searchPaths),
+        });
+      },
+      name: "agent-plugins",
+    });
+    for (const { command, name } of state.current.plugins.flatMap(toCommands)) {
+      editor.add({
+        ...(command.description === undefined ? {} : { description: command.description }),
+        async execute({ delivery, prompt, sessionID }) {
+          const text = await expandShell(renderCommand(command, prompt.text), sessionID);
+          await ctx.session.prompt({ delivery, sessionID, text, ...forwardAttachments(prompt) });
+        },
+        name,
+      });
+    }
+  });
+};
+
+export default Plugin.define({
+  id: "agent-plugins",
+  async setup(ctx) {
+    const { diagnostics: optionDiagnostics, options } = readOptions(ctx);
+    const load = async (): Promise<LoadResult> => {
+      const result = await loadAll(options.searchPaths, {
+        dataRoot: options.dataRoot,
+        env: process.env,
+        formats: options.formats,
+        ...(options.codexCache === undefined ? {} : { codexCache: options.codexCache }),
+      });
+      const loaded = {
+        diagnostics: [...optionDiagnostics, ...result.diagnostics],
+        plugins: result.plugins.map((plugin) => scopeComponents(plugin, options.components)),
+      };
+      logDiagnostics(loaded.diagnostics);
+      return loaded;
+    };
+    const state: State = { current: await load() };
+    const reload = async () => {
+      state.current = await load();
+      await Promise.all([ctx.skill.reload(), ctx.mcp.reload(), ctx.command.reload()]);
+    };
+    await registerSkillsAndMcp(ctx, options, state);
+    await registerCommands(ctx, options, state, reload);
   },
 });

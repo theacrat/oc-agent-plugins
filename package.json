@@ -14,6 +14,9 @@
     "src"
   ],
   "type": "module",
+  "imports": {
+    "#src/*": "./src/*"
+  },
   "exports": {
     ".": "./index.ts"
   },

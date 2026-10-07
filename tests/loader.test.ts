@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { loadAll, loadPlugin } from "@/loader.ts";
+import { loadAll, loadPlugin } from "#src/loader.ts";
 
 import { DATA, HOME_PLACEHOLDER, ROOT, makeTree, manifest, mcp, skill } from "./fixture.ts";
 

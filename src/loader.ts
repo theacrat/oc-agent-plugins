@@ -1,15 +1,27 @@
-import { mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { parseManifest } from "@/manifest.ts";
-import { discoverServers } from "@/mcp.ts";
-import { resolveWithin } from "@/paths.ts";
-import { discoverSkills } from "@/skills.ts";
-import type { AgentPlugin, Diagnostic, LoadResult } from "@/types.ts";
+import { parseManifest } from "#src/manifest.ts";
+import { discoverServers } from "#src/mcp.ts";
+import { ensureDir, listDir, readText, realOrSelf, resolveWithin } from "#src/paths.ts";
+import { discoverSkills } from "#src/skills.ts";
+import { FORMATS } from "#src/types.ts";
+import type { AgentPlugin, Diagnostic, Format, LoadResult, Report } from "#src/types.ts";
+import { codexCachePlugins } from "#src/vendor/codex-cache.ts";
+import { hasVendorManifest, loadVendorPlugin } from "#src/vendor/loader.ts";
+import {
+  hasMarketplace as hasVendorMarketplace,
+  readMarketplaces,
+} from "#src/vendor/marketplace.ts";
+import type { MarketplaceEntry } from "#src/vendor/marketplace.ts";
+import type { VendorFormat } from "#src/vendor/placeholders.ts";
 
 interface LoadOptions {
   readonly dataRoot: string;
+  // Codex's versioned install cache; each newest version directory is loaded as a plugin root.
+  readonly codexCache?: string;
   readonly platform?: NodeJS.Platform;
+  readonly formats?: ReadonlySet<Format>;
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 interface PluginLoad {
@@ -17,23 +29,31 @@ interface PluginLoad {
   readonly diagnostics: readonly Diagnostic[];
 }
 
-const loadPlugin = async (directory: string, options: LoadOptions): Promise<PluginLoad> => {
-  const root = await realpath(directory);
+// A directory to load, the format that claimed it, and any marketplace entry that pointed at it.
+interface Candidate {
+  readonly root: string;
+  readonly format: Format;
+  readonly entry?: MarketplaceEntry["entry"];
+}
+
+const ALL_FORMATS: ReadonlySet<Format> = new Set(FORMATS);
+
+const loadAgentPlugin = async (root: string, options: LoadOptions): Promise<PluginLoad> => {
   const manifestFile = await resolveWithin(root, path.join(root, "plugin.json"));
+  const reject = (message: string): PluginLoad => ({
+    diagnostics: [{ message, severity: "error", source: root }],
+  });
   if (manifestFile.kind !== "file") {
-    const message =
+    return reject(
       manifestFile.kind === "missing"
         ? "plugin.json not found"
-        : "plugin.json does not resolve to a file inside the plugin root";
-    return { diagnostics: [{ message, severity: "error", source: root }] };
+        : "plugin.json does not resolve to a file inside the plugin root",
+    );
   }
-  const result = parseManifest(await readFile(manifestFile.path, "utf8"));
+  const read = await readText(manifestFile.path);
+  const result = read.ok ? parseManifest(read.text) : read;
   if (!result.ok) {
-    return {
-      diagnostics: [
-        { message: `plugin rejected: ${result.error}`, severity: "error", source: root },
-      ],
-    };
+    return reject(`plugin rejected: ${result.error}`);
   }
   const { manifest } = result;
   const diagnostics: Diagnostic[] = result.warnings.map((message) => ({
@@ -41,7 +61,7 @@ const loadPlugin = async (directory: string, options: LoadOptions): Promise<Plug
     severity: "warning",
     source: manifest.name,
   }));
-  const report = (diagnostic: Diagnostic) => {
+  const report: Report = (diagnostic) => {
     diagnostics.push({ ...diagnostic, source: `${manifest.name}/${diagnostic.source}` });
   };
 
@@ -52,49 +72,208 @@ const loadPlugin = async (directory: string, options: LoadOptions): Promise<Plug
     discoverServers(ctx, report),
   ]);
   if (Object.values(servers).some((server) => server.type === "stdio")) {
-    await mkdir(dataDir, { recursive: true });
+    const error = await ensureDir(dataDir);
+    if (error !== undefined) {
+      report({ message: error, severity: "error", source: "mcp.json" });
+    }
   }
-  return { diagnostics, plugin: { dataDir, manifest, root, servers, skills } };
+  const plugin: AgentPlugin = {
+    commands: [],
+    dataDir,
+    format: "agent-plugins",
+    manifest,
+    root,
+    rules: [],
+    servers,
+    skills,
+  };
+  return { diagnostics, plugin };
 };
 
-const hasManifest = async (directory: string) => {
-  try {
-    const names = await readdir(directory);
-    return names.includes("plugin.json");
-  } catch {
-    return false;
+const loadCandidate = async (candidate: Candidate, options: LoadOptions): Promise<PluginLoad> => {
+  if (candidate.format === "agent-plugins") {
+    return loadAgentPlugin(candidate.root, options);
   }
+  const diagnostics: { -readonly [Key in keyof Diagnostic]: Diagnostic[Key] }[] = [];
+  const name = path.basename(candidate.root);
+  const report: Report = (diagnostic) => {
+    diagnostics.push({ ...diagnostic, source: `${name}/${diagnostic.source}` });
+  };
+  const loaded = await loadVendorPlugin(
+    candidate.root,
+    candidate.format,
+    {
+      dataRoot: options.dataRoot,
+      env: options.env ?? {},
+      ...(candidate.entry === undefined ? {} : { entry: candidate.entry }),
+    },
+    report,
+  );
+  if (!loaded.ok) {
+    return {
+      diagnostics: [
+        {
+          message: `${candidate.format} plugin rejected: ${loaded.error}`,
+          severity: "error",
+          source: candidate.root,
+        },
+      ],
+    };
+  }
+  // Re-key diagnostics under the manifest name once it's known.
+  const prefix = `${loaded.plugin.manifest.name}/`;
+  for (const diagnostic of diagnostics) {
+    diagnostic.source = diagnostic.source.replace(`${name}/`, prefix);
+  }
+  return { diagnostics, plugin: loaded.plugin };
 };
 
-// A search path is either a plugin root or a directory whose immediate children are plugin roots.
-const expandSearchPath = async (searchPath: string): Promise<string[]> => {
-  if (await hasManifest(searchPath)) {
-    return [searchPath];
+const hasManifest = async (root: string, format: Format) => {
+  if (format !== "agent-plugins") {
+    return hasVendorManifest(root, format);
   }
-  let names: string[];
-  try {
-    names = await readdir(searchPath);
-  } catch {
+  const resolved = await resolveWithin(root, path.join(root, "plugin.json"));
+  return resolved.kind === "file";
+};
+
+// The first enabled format, in FORMATS order, with a manifest claims the directory.
+const detectFormat = async (
+  root: string,
+  formats: ReadonlySet<Format>,
+): Promise<Format | undefined> => {
+  const enabled = FORMATS.filter((format) => formats.has(format));
+  const found = await Promise.all(enabled.map(async (format) => hasManifest(root, format)));
+  return enabled.find((_format, index) => found[index]);
+};
+
+const isDirectory = async (directory: string) => {
+  const resolved = await resolveWithin(directory, directory);
+  return resolved.kind === "directory";
+};
+
+const vendorFormats = (formats: ReadonlySet<Format>) =>
+  new Set([...formats].filter((format): format is VendorFormat => format !== "agent-plugins"));
+
+// A marketplace entry loads under the format of the marketplace that listed it, unless a
+// higher-precedence manifest (for example root plugin.json) is present in the plugin itself.
+const fromMarketplace = async (
+  entry: MarketplaceEntry,
+  formats: ReadonlySet<Format>,
+): Promise<Candidate | undefined> => {
+  if (!(await isDirectory(entry.root))) {
+    return undefined;
+  }
+  const detected = await detectFormat(entry.root, formats);
+  if (detected !== undefined && FORMATS.indexOf(detected) < FORMATS.indexOf(entry.format)) {
+    return { format: detected, root: entry.root };
+  }
+  return { entry: entry.entry, format: detected ?? entry.format, root: entry.root };
+};
+
+// A search path is a plugin root, a marketplace, or a directory whose immediate children are either.
+const expandSearchPath = async (
+  searchPath: string,
+  formats: ReadonlySet<Format>,
+  report: Report,
+): Promise<Candidate[]> => {
+  if (!(await isDirectory(searchPath))) {
     return [];
   }
-  const children = names.toSorted().map((name) => path.join(searchPath, name));
-  const flags = await Promise.all(children.map(async (child) => hasManifest(child)));
-  return children.filter((_child, index) => flags[index]);
+  const own = await detectFormat(searchPath, formats);
+  // A plugin repo often ships a marketplace that only lists itself; reading it adds nothing but noise.
+  const marketplace = await readMarketplaces(
+    searchPath,
+    vendorFormats(formats),
+    report,
+    own !== undefined,
+  );
+  const listed = await Promise.all(
+    marketplace.map(async (entry) => fromMarketplace(entry, formats)),
+  );
+  const candidates = listed.filter((candidate) => candidate !== undefined);
+  // A marketplace that lists itself (source "./") already produced the root candidate.
+  if (own !== undefined && !candidates.some((candidate) => candidate.root === searchPath)) {
+    candidates.unshift({ format: own, root: searchPath });
+  }
+  // A plugin root or a marketplace decides what the directory contains. Its children are only
+  // scanned when it's neither, so entries a marketplace rejected can't come back as children.
+  if (own !== undefined || (await hasVendorMarketplace(searchPath, vendorFormats(formats)))) {
+    return candidates;
+  }
+  const listing = await listDir(searchPath);
+  const names = listing.map((entry) => entry.name).toSorted();
+  const children = await Promise.all(
+    names.map(async (name) => {
+      const child = path.join(searchPath, name);
+      if (!(await isDirectory(child))) {
+        return [];
+      }
+      const format = await detectFormat(child, formats);
+      if (format !== undefined) {
+        return [{ format, root: child }];
+      }
+      const entries = await readMarketplaces(child, vendorFormats(formats), report);
+      const nested = await Promise.all(
+        entries.map(async (entry) => fromMarketplace(entry, formats)),
+      );
+      return nested.filter((candidate) => candidate !== undefined);
+    }),
+  );
+  return children.flat();
+};
+
+const loadPlugin = async (directory: string, options: LoadOptions): Promise<PluginLoad> => {
+  const root = await realOrSelf(directory);
+  const format = await detectFormat(root, options.formats ?? ALL_FORMATS);
+  if (format === undefined) {
+    return { diagnostics: [{ message: "plugin.json not found", severity: "error", source: root }] };
+  }
+  return loadCandidate({ format, root }, options);
+};
+
+// Every candidate directory from search paths and the Codex cache, deduplicated by real path.
+const findCandidates = async (
+  searchPaths: readonly string[],
+  options: LoadOptions,
+  report: Report,
+): Promise<Candidate[]> => {
+  const formats = options.formats ?? ALL_FORMATS;
+  const cached =
+    options.codexCache === undefined ? [] : await codexCachePlugins(options.codexCache);
+  const expanded = await Promise.all([
+    ...searchPaths.map(async (searchPath) =>
+      expandSearchPath(path.resolve(searchPath), formats, report),
+    ),
+    ...cached.map(async (root): Promise<Candidate[]> => {
+      const format = await detectFormat(root, formats);
+      return format === undefined ? [] : [{ format, root }];
+    }),
+  ]);
+  const all = expanded.flat();
+  const reals = await Promise.all(all.map(async (candidate) => realOrSelf(candidate.root)));
+  const unique = new Map<string, Candidate>();
+  for (const [index, candidate] of all.entries()) {
+    const real = reals[index] ?? candidate.root;
+    if (!unique.has(real)) {
+      unique.set(real, { ...candidate, root: real });
+    }
+  }
+  return [...unique.values()];
 };
 
 const loadAll = async (
   searchPaths: readonly string[],
   options: LoadOptions,
 ): Promise<LoadResult> => {
-  const expanded = await Promise.all(
-    searchPaths.map(async (searchPath) => expandSearchPath(path.resolve(searchPath))),
-  );
-  const roots = [
-    ...new Set(await Promise.all(expanded.flat().map(async (root) => realpath(root)))),
-  ];
-  const loads = await Promise.all(roots.map(async (root) => loadPlugin(root, options)));
-
   const diagnostics: Diagnostic[] = [];
+  const report: Report = (diagnostic) => {
+    diagnostics.push(diagnostic);
+  };
+  const candidates = await findCandidates(searchPaths, options, report);
+  const loads = await Promise.all(
+    candidates.map(async (candidate) => loadCandidate(candidate, options)),
+  );
+  // Plugin names must be unique; the first one found wins.
   const plugins = new Map<string, AgentPlugin>();
   for (const [index, loaded] of loads.entries()) {
     diagnostics.push(...loaded.diagnostics);
@@ -107,7 +286,7 @@ const loadAll = async (
       plugins.set(plugin.manifest.name, plugin);
     } else {
       diagnostics.push({
-        message: `skipped ${roots[index]}; a plugin with this name was already loaded from ${existing.root}`,
+        message: `skipped ${candidates[index]?.root}; a plugin with this name was already loaded from ${existing.root}`,
         severity: "warning",
         source: plugin.manifest.name,
       });

@@ -1,13 +1,11 @@
-import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { parse } from "yaml";
+import { optionalString, parseFrontmatter } from "#src/frontmatter.ts";
+import { isStringRecord } from "#src/json.ts";
+import type { JsonRecord } from "#src/json.ts";
+import { listDir, readText, resolveWithin } from "#src/paths.ts";
+import type { Diagnostic, PluginSkill, Report } from "#src/types.ts";
 
-import { errorMessage, isRecord, isStringRecord } from "@/json.ts";
-import { resolveWithin } from "@/paths.ts";
-import type { Diagnostic, PluginSkill } from "@/types.ts";
-
-const FRONTMATTER = /^---\r?\n(?<yaml>[\s\S]*?)\r?\n---(?:\r?\n|$)/u;
 const KNOWN_FIELDS = new Set([
   "name",
   "description",
@@ -16,6 +14,9 @@ const KNOWN_FIELDS = new Set([
   "metadata",
   "allowed-tools",
 ]);
+
+// Agent Plugins requires Agent Skills conformance; vendor hosts accept looser skills.
+type SkillMode = "strict" | "lenient";
 
 type SkillResult =
   | { ok: true; skill: PluginSkill; warnings: string[] }
@@ -41,7 +42,7 @@ const checkName = (name: unknown, directory: string): string | undefined => {
   return undefined;
 };
 
-const checkOptional = (doc: Readonly<Record<string, unknown>>): string | undefined => {
+const checkOptional = (doc: JsonRecord): string | undefined => {
   const { compatibility, license, metadata } = doc;
   if (
     compatibility !== undefined &&
@@ -61,56 +62,69 @@ const checkOptional = (doc: Readonly<Record<string, unknown>>): string | undefin
   return undefined;
 };
 
-const parseSkill = (text: string, directory: string, file: string): SkillResult => {
-  const match = FRONTMATTER.exec(text);
-  if (match?.groups?.["yaml"] === undefined) {
-    return { error: "SKILL.md must start with YAML frontmatter", ok: false };
-  }
-  let doc: unknown;
-  try {
-    doc = parse(match.groups["yaml"]);
-  } catch (error) {
-    return {
-      error: `invalid frontmatter YAML: ${errorMessage(error)}`,
-      ok: false,
-    };
-  }
-  if (!isRecord(doc)) {
-    return { error: "frontmatter must be a YAML mapping", ok: false };
-  }
-  const { description, name } = doc;
-  const error =
-    checkName(name, directory) ??
+// Claude Code reads yes/no/on/off/1/0 in any case as booleans too.
+const isTruthy = (value: unknown) =>
+  value === true ||
+  (typeof value === "string" && ["true", "yes", "on", "1"].includes(value.toLowerCase()));
+
+const parseStrict = (doc: JsonRecord, directory: string): string | undefined => {
+  const { description } = doc;
+  return (
+    checkName(doc["name"], directory) ??
     (typeof description !== "string" || description.trim() === "" || description.length > 1024
       ? "description must be a 1-1024 character string"
       : undefined) ??
-    checkOptional(doc);
-  if (error !== undefined || typeof name !== "string" || typeof description !== "string") {
-    return { error: error ?? "invalid frontmatter", ok: false };
+    checkOptional(doc)
+  );
+};
+
+const parseSkill = (
+  text: string,
+  directory: string,
+  file: string,
+  mode: SkillMode = "strict",
+): SkillResult => {
+  const parsed = parseFrontmatter(text, mode === "strict");
+  if (!parsed.ok) {
+    return { error: `SKILL.md ${parsed.error}`, ok: false };
   }
-  const warnings = Object.keys(doc)
-    .filter((key) => !KNOWN_FIELDS.has(key))
-    .map((key) => `unknown frontmatter field "${key}"`);
+  const { body, data } = parsed;
+  if (mode === "strict") {
+    const error = parseStrict(data, directory);
+    if (error !== undefined) {
+      return { error, ok: false };
+    }
+  }
+  // Vendor hosts key skills by directory and fall back to it when frontmatter omits a name.
+  const name = mode === "strict" ? String(data["name"]).normalize("NFKC") : directory;
+  const description = optionalString(data["description"]);
+  if (description === undefined) {
+    return { error: "description is required so the model can discover the skill", ok: false };
+  }
+  const warnings =
+    mode === "strict"
+      ? Object.keys(data)
+          .filter((key) => !KNOWN_FIELDS.has(key))
+          .map((key) => `unknown frontmatter field "${key}"`)
+      : [];
+  // Claude Code: `disable-model-invocation: true` keeps the skill but hides it from the model.
+  const hidden = mode === "lenient" && isTruthy(data["disable-model-invocation"]);
   return {
     ok: true,
-    skill: {
-      content: text.slice(match[0].length).trim(),
-      description,
-      name: name.normalize("NFKC"),
-      path: file,
-    },
+    skill: { content: body, description, name, path: file, ...(hidden && { autoinvoke: false }) },
     warnings,
   };
 };
 
 const loadSkill = async (
   root: string,
-  skillsDir: string,
-  entry: string,
-  report: (diagnostic: Diagnostic) => void,
+  skillDir: string,
+  mode: SkillMode,
+  report: Report,
 ): Promise<PluginSkill | undefined> => {
-  const source = `skills/${entry}`;
-  const skillFile = await resolveWithin(root, path.join(skillsDir, entry, "SKILL.md"));
+  const directory = path.basename(skillDir);
+  const source = path.relative(root, skillDir) || ".";
+  const skillFile = await resolveWithin(root, path.join(skillDir, "SKILL.md"));
   if (skillFile.kind === "missing") {
     return undefined;
   }
@@ -122,7 +136,8 @@ const loadSkill = async (
     });
     return undefined;
   }
-  const result = parseSkill(await readFile(skillFile.path, "utf8"), entry, skillFile.path);
+  const read = await readText(skillFile.path);
+  const result = read.ok ? parseSkill(read.text, directory, skillFile.path, mode) : read;
   if (!result.ok) {
     report({ message: `${result.error}; skipped`, severity: "error", source });
     return undefined;
@@ -133,29 +148,16 @@ const loadSkill = async (
   return result.skill;
 };
 
-const discoverSkills = async (
-  root: string,
-  report: (diagnostic: Diagnostic) => void,
+// Parse concurrently but report in directory order so diagnostics are deterministic.
+const loadInOrder = async (
+  skillDirs: readonly string[],
+  load: (skillDir: string, report: Report) => Promise<PluginSkill | undefined>,
+  report: Report,
 ): Promise<PluginSkill[]> => {
-  const location = await resolveWithin(root, path.join(root, "skills"));
-  if (location.kind === "missing") {
-    return [];
-  }
-  if (location.kind !== "directory") {
-    report({
-      message: "skills/ is not a directory inside the plugin root; skills disabled",
-      severity: "error",
-      source: "skills",
-    });
-    return [];
-  }
-  const names = await readdir(location.path);
-  const entries = names.toSorted();
-  // Parse concurrently but report in directory order so diagnostics are deterministic.
   const loaded = await Promise.all(
-    entries.map(async (entry) => {
+    skillDirs.map(async (skillDir) => {
       const diagnostics: Diagnostic[] = [];
-      const skill = await loadSkill(root, location.path, entry, (diagnostic) => {
+      const skill = await load(skillDir, (diagnostic) => {
         diagnostics.push(diagnostic);
       });
       return { diagnostics, skill };
@@ -169,4 +171,51 @@ const discoverSkills = async (
   return loaded.flatMap(({ skill }) => (skill === undefined ? [] : [skill]));
 };
 
-export { discoverSkills, parseSkill };
+// A skills directory holds <name>/SKILL.md children; vendor formats also allow SKILL.md directly in it.
+const discoverSkillsIn = async (
+  root: string,
+  directory: string,
+  mode: SkillMode,
+  report: Report,
+): Promise<PluginSkill[]> => {
+  const location = await resolveWithin(root, directory);
+  const source = path.relative(root, directory) || ".";
+  if (location.kind === "missing") {
+    return [];
+  }
+  if (location.kind !== "directory") {
+    report({
+      message: `${source} is not a directory inside the plugin root; skills disabled`,
+      severity: "error",
+      source,
+    });
+    return [];
+  }
+  if (mode === "lenient" && location.path !== root) {
+    const direct = await resolveWithin(root, path.join(location.path, "SKILL.md"));
+    if (direct.kind === "file") {
+      return loadInOrder(
+        [location.path],
+        async (dir, sink) => loadSkill(root, dir, mode, sink),
+        report,
+      );
+    }
+  }
+  const listing = await listDir(location.path);
+  const children = listing
+    .map((entry) => entry.name)
+    .toSorted()
+    .map((name) => path.join(location.path, name));
+  return loadInOrder(children, async (dir, sink) => loadSkill(root, dir, mode, sink), report);
+};
+
+const discoverSingleSkill = async (root: string, report: Report): Promise<PluginSkill[]> => {
+  const skill = await loadSkill(root, root, "lenient", report);
+  return skill === undefined ? [] : [skill];
+};
+
+const discoverSkills = async (root: string, report: Report): Promise<PluginSkill[]> =>
+  discoverSkillsIn(root, path.join(root, "skills"), "strict", report);
+
+export type { SkillMode };
+export { discoverSingleSkill, discoverSkills, discoverSkillsIn, parseSkill };

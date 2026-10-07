@@ -1,11 +1,10 @@
-import { mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { isRecord, isStringArray, isStringRecord, parseJson } from "@/json.ts";
-import type { JsonRecord } from "@/json.ts";
-import { isWithin, resolveWithin } from "@/paths.ts";
-import { MCP_SCHEMA } from "@/types.ts";
-import type { Diagnostic, PluginServer } from "@/types.ts";
+import { isRecord, isStringArray, isStringRecord, parseJson } from "#src/json.ts";
+import type { JsonRecord } from "#src/json.ts";
+import { ensureDir, isWithin, readText, realOrSelf, resolveWithin } from "#src/paths.ts";
+import { MCP_SCHEMA } from "#src/types.ts";
+import type { Diagnostic, PluginServer } from "#src/types.ts";
 
 // oxlint-disable-next-line no-template-curly-in-string -- literal Agent Plugins placeholder, not a template
 const ROOT = "${PLUGIN_ROOT}";
@@ -117,8 +116,11 @@ const resolveCwd = async (cwd: unknown, ctx: ServerContext): Promise<string | Se
     if (!isWithin(ctx.dataDir, path.resolve(expanded))) {
       return fail(`cwd "${cwd}" escapes PLUGIN_DATA`);
     }
-    await mkdir(expanded, { recursive: true });
-    base = await realpath(ctx.dataDir);
+    const error = await ensureDir(expanded);
+    if (error !== undefined) {
+      return fail(error);
+    }
+    base = await realOrSelf(ctx.dataDir);
   }
   const resolved = await resolveWithin(base, expanded);
   if (resolved.kind !== "directory") {
@@ -241,10 +243,11 @@ const discoverServers = async (
   if (location.kind === "missing") {
     return {};
   }
-  const entries =
+  const read =
     location.kind === "file"
-      ? readServers(await readFile(location.path, "utf8"))
-      : "mcp.json is not a regular file inside the plugin root";
+      ? await readText(location.path)
+      : { error: "mcp.json is not a regular file inside the plugin root", ok: false as const };
+  const entries = read.ok ? readServers(read.text) : read.error;
   if (typeof entries === "string") {
     report({
       message: `${entries}; MCP disabled for this plugin`,
@@ -270,5 +273,5 @@ const discoverServers = async (
   return servers;
 };
 
-export type { ServerContext };
-export { discoverServers, expand, parseServer };
+export type { ServerContext, ServerResult };
+export { checkHeaders, checkUrl, discoverServers, expand, parseServer };

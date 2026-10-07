@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseManifest } from "@/manifest.ts";
+import { parseManifest } from "#src/manifest.ts";
 
 import { PLUGIN_SCHEMA } from "./fixture.ts";
 

@@ -22,6 +22,18 @@ export default defineConfig({
     {
       files: ["src/**/*"],
       rules: {
+        // OpenCode loads src/ as raw TypeScript from the consumer's process, where tsconfig paths don't apply.
+        "eslint/no-restricted-imports": [
+          "error",
+          {
+            patterns: [
+              {
+                group: ["@/*"],
+                message: "Use a relative import; OpenCode can't resolve tsconfig paths.",
+              },
+            ],
+          },
+        ],
         "import/no-default-export": "error",
         "import/prefer-default-export": "off",
         "node/no-process-env": "error",
@@ -112,7 +124,17 @@ export default defineConfig({
     "import/no-named-export": "off",
     "import/no-nodejs-modules": [
       "error",
-      { allow: ["node:fs/promises", "node:os", "node:path", "node:readline", "node:url"] },
+      {
+        allow: [
+          "node:child_process",
+          "node:fs",
+          "node:fs/promises",
+          "node:os",
+          "node:path",
+          "node:readline",
+          "node:url",
+        ],
+      },
     ],
     "import/no-unassigned-import": ["error", { allow: ["**/*.css"] }],
     "import/prefer-default-export": ["error", { target: "any" }],

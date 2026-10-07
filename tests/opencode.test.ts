@@ -1,12 +1,46 @@
 import { describe, expect, it } from "vitest";
 
-import { formatStatus, toServerConfigs, toSkillInfo } from "@/opencode.ts";
-import type { AgentPlugin } from "@/types.ts";
+import {
+  alwaysRules,
+  formatStatus,
+  scopeComponents,
+  toCommands,
+  toServerConfigs,
+  toSkillInfo,
+} from "#src/opencode.ts";
+import type { AgentPlugin } from "#src/types.ts";
 
 const plugin: AgentPlugin = {
+  commands: [
+    {
+      arguments: [],
+      description: "Ship it",
+      name: "deploy",
+      syntax: "plain",
+      template: "Deploy $1 to $2.",
+    },
+  ],
   dataDir: "/data/demo",
+  format: "cursor",
   manifest: { name: "demo", version: "1.0.0" },
   root: "/plugins/demo",
+  rules: [
+    {
+      alwaysApply: true,
+      content: "Always use const.",
+      globs: [],
+      name: "const",
+      path: "/plugins/demo/rules/const.mdc",
+    },
+    {
+      alwaysApply: false,
+      content: "Prefer named exports.",
+      description: "Export style",
+      globs: ["**/*.ts"],
+      name: "exports",
+      path: "/plugins/demo/rules/exports.mdc",
+    },
+  ],
   servers: {
     local: {
       args: ["--x"],
@@ -28,7 +62,7 @@ const plugin: AgentPlugin = {
 };
 
 describe("opencode mapping", () => {
-  it("namespaces skills by plugin name", () => {
+  it("namespaces skills and turns non-always rules into skills", () => {
     expect(toSkillInfo(plugin)).toEqual([
       {
         content: "Body",
@@ -37,7 +71,34 @@ describe("opencode mapping", () => {
         name: "deploy",
         path: "/plugins/demo/skills/deploy/SKILL.md",
       },
+      {
+        content: "Prefer named exports.",
+        description: "Export style (applies to **/*.ts)",
+        id: "demo:rule-exports",
+        name: "rule-exports",
+        path: "/plugins/demo/rules/exports.mdc",
+      },
     ]);
+  });
+
+  it("puts always-apply rules in the system prompt", () => {
+    expect(alwaysRules(plugin)).toEqual([
+      '<rule plugin="demo" name="const">\nAlways use const.\n</rule>',
+    ]);
+  });
+
+  it("drops disabled component types", () => {
+    const scoped = scopeComponents(plugin, new Set(["skills", "mcp"]));
+    expect([
+      scoped.commands,
+      scoped.rules,
+      Object.keys(scoped.servers),
+      scoped.skills.length,
+    ]).toEqual([[], [], ["local", "remote"], 1]);
+  });
+
+  it("namespaces commands", () => {
+    expect(toCommands(plugin).map(({ name }) => name)).toEqual(["demo:deploy"]);
   });
 
   it("maps servers to opencode local and remote configs", () => {
@@ -67,9 +128,11 @@ describe("opencode mapping", () => {
       [
         "Agent Plugins searched: /p",
         "",
-        "demo@1.0.0 (/plugins/demo)",
-        "  skills: demo:deploy",
+        "demo@1.0.0 [cursor] (/plugins/demo)",
+        "  skills: demo:deploy, demo:rule-exports",
         "  mcp: demo-local, demo-remote",
+        "  commands: /demo:deploy",
+        "  always-on rules: const",
         "",
         "Diagnostics:",
         "- error: demo/mcp.json#x: bad",

@@ -1,23 +1,76 @@
 import { Skill } from "@opencode/plugin";
 import type { Mcp } from "@opencode/plugin";
 
-import type { AgentPlugin, Diagnostic, LoadResult, PluginServer } from "@/types.ts";
+import type {
+  AgentPlugin,
+  Component,
+  Diagnostic,
+  LoadResult,
+  PluginCommand,
+  PluginRule,
+  PluginServer,
+} from "#src/types.ts";
 
 const { fields } = Skill.Info;
 
 const skillID = (plugin: AgentPlugin, skill: string) => `${plugin.manifest.name}:${skill}`;
 const serverName = (plugin: AgentPlugin, server: string) => `${plugin.manifest.name}-${server}`;
+const commandName = (plugin: AgentPlugin, command: string) => `${plugin.manifest.name}:${command}`;
+const ruleSkillName = (rule: PluginRule) => `rule-${rule.name}`;
 
-const toSkillInfo = (plugin: AgentPlugin): Skill.Info[] =>
-  plugin.skills.map((skill) =>
-    Skill.Info.make({
-      content: skill.content,
-      description: skill.description,
-      id: fields.id.make(skillID(plugin, skill.name)),
-      name: fields.name.make(skill.name),
-      path: fields.path.make(skill.path),
-    }),
-  );
+const makeSkill = (
+  id: string,
+  name: string,
+  description: string,
+  file: string,
+  content: string,
+  autoinvoke?: boolean,
+) =>
+  Skill.Info.make({
+    content,
+    description,
+    id: fields.id.make(id),
+    name: fields.name.make(name),
+    path: fields.path.make(file),
+    ...(autoinvoke === undefined ? {} : { autoinvoke }),
+  });
+
+// Rules that aren't always-applied are "the agent decides" in Cursor, which is what a skill is.
+const ruleDescription = (rule: PluginRule) => {
+  const base = rule.description ?? `Rule ${rule.name}`;
+  return rule.globs.length === 0 ? base : `${base} (applies to ${rule.globs.join(", ")})`;
+};
+
+const toSkillInfo = (plugin: AgentPlugin): Skill.Info[] => [
+  ...plugin.skills.map((skill) =>
+    makeSkill(
+      skillID(plugin, skill.name),
+      skill.name,
+      skill.description,
+      skill.path,
+      skill.content,
+    ),
+  ),
+  ...plugin.rules
+    .filter((rule) => !rule.alwaysApply)
+    .map((rule) =>
+      makeSkill(
+        skillID(plugin, ruleSkillName(rule)),
+        ruleSkillName(rule),
+        ruleDescription(rule),
+        rule.path,
+        rule.content,
+      ),
+    ),
+];
+
+const alwaysRules = (plugin: AgentPlugin): string[] =>
+  plugin.rules
+    .filter((rule) => rule.alwaysApply)
+    .map(
+      (rule) =>
+        `<rule plugin="${plugin.manifest.name}" name="${rule.name}">\n${rule.content}\n</rule>`,
+    );
 
 const toServerConfig = (server: PluginServer): Mcp.ServerConfig =>
   server.type === "stdio"
@@ -35,17 +88,38 @@ const toServerConfigs = (plugin: AgentPlugin): [string, Mcp.ServerConfig][] =>
     toServerConfig(server),
   ]);
 
+const toCommands = (plugin: AgentPlugin): { name: string; command: PluginCommand }[] =>
+  plugin.commands.map((command) => ({ command, name: commandName(plugin, command.name) }));
+
+// Drops disabled component types so registration and the status report agree.
+const scopeComponents = (plugin: AgentPlugin, components: ReadonlySet<Component>): AgentPlugin => ({
+  ...plugin,
+  commands: components.has("commands") ? plugin.commands : [],
+  rules: components.has("rules") ? plugin.rules : [],
+  servers: components.has("mcp") ? plugin.servers : {},
+  skills: components.has("skills") ? plugin.skills : [],
+});
+
 const formatDiagnostic = (diagnostic: Diagnostic) =>
   `- ${diagnostic.severity}: ${diagnostic.source}: ${diagnostic.message}`;
 
+const list = (label: string, items: readonly string[]) =>
+  items.length === 0 ? [] : [`  ${label}: ${items.join(", ")}`];
+
 const formatPlugin = (plugin: AgentPlugin) => {
   const version = plugin.manifest.version === undefined ? "" : `@${plugin.manifest.version}`;
-  const skills = plugin.skills.map((skill) => skillID(plugin, skill.name));
+  const skills = toSkillInfo(plugin).map((skill) => skill.id);
   const servers = Object.keys(plugin.servers).map((name) => serverName(plugin, name));
+  const commands = plugin.commands.map((command) => `/${commandName(plugin, command.name)}`);
+  const rules = plugin.rules.filter((rule) => rule.alwaysApply).map((rule) => rule.name);
+  const empty = skills.length + servers.length + commands.length + rules.length === 0;
   return [
-    `${plugin.manifest.name}${version} (${plugin.root})`,
-    `  skills: ${skills.join(", ") || "none"}`,
-    `  mcp: ${servers.join(", ") || "none"}`,
+    `${plugin.manifest.name}${version} [${plugin.format}] (${plugin.root})`,
+    ...list("skills", skills),
+    ...list("mcp", servers),
+    ...list("commands", commands),
+    ...list("always-on rules", rules),
+    ...(empty ? ["  nothing OpenCode can use"] : []),
   ];
 };
 
@@ -61,4 +135,14 @@ const formatStatus = (result: LoadResult, searchPaths: readonly string[]) =>
       : ["", "Diagnostics:", ...result.diagnostics.map(formatDiagnostic)]),
   ].join("\n");
 
-export { formatStatus, serverName, skillID, toServerConfigs, toSkillInfo };
+export {
+  alwaysRules,
+  scopeComponents,
+  commandName,
+  formatStatus,
+  serverName,
+  skillID,
+  toCommands,
+  toServerConfigs,
+  toSkillInfo,
+};

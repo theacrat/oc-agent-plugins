@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { loadAll } from "@/loader.ts";
-import { toServerConfigs } from "@/opencode.ts";
+import { loadAll } from "#src/loader.ts";
+import { toServerConfigs } from "#src/opencode.ts";
 
 // Real-world plugin: https://github.com/cloudflare/skills. Clone it and point CLOUDFLARE_SKILLS at the checkout.
 const checkout = process.env["CLOUDFLARE_SKILLS"];

@@ -1,7 +1,7 @@
-import { isRecord, isStringArray, parseJson } from "@/json.ts";
-import type { JsonRecord } from "@/json.ts";
-import { PLUGIN_SCHEMA } from "@/types.ts";
-import type { Manifest } from "@/types.ts";
+import { isRecord, isStringArray, parseJson } from "#src/json.ts";
+import type { JsonRecord } from "#src/json.ts";
+import { PLUGIN_SCHEMA } from "#src/types.ts";
+import type { Manifest } from "#src/types.ts";
 
 const NAME = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
 const STRING_FIELDS = ["version", "description", "homepage", "repository", "license"] as const;
