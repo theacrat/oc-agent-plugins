@@ -53,7 +53,7 @@ Agents can call the structured `agent_plugins_manage` tool when the adapter is l
 
 Use `name` for named operations, `all: true` for bulk updates and `global: true` for global scope. Git installation also accepts `ref` and `subdir`. The tool uses the invoking session's directory and returns JSON results or safe diagnostic errors.
 
-OpenCode asks for permission before every invocation, including inventory reads. Existing deny rules remain enforced. The tool has no approval-bypass argument, does not grant vendor execution trust and does not automatically rescan. Secure management retains the same Linux requirement as the CLI.
+The tool asks for explicit approval through OpenCode's native question tool before every invocation, including inventory reads. A missing or denied question tool blocks the operation. The management tool's deny policy also remains enforced. There is no approval-bypass argument, vendor execution trust grant or automatic rescan. Secure management retains the same Linux requirement as the CLI.
 
 Package-management commands require Linux with `/proc/self/fd` available and Node 22.14 or newer. Help and version run on other platforms. Git is only required for repository sources. GitHub shorthand, HTTPS and SSH Git URLs (including `ssh://git@host/repository.git`) are supported; archives, npm packages and submodules are not installation sources.
 
