@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { runCli } from "#src/cli/run.ts";
 import { isRecord } from "#src/json.ts";
@@ -34,6 +34,19 @@ const entriesFrom = (output: readonly string[]): readonly unknown[] => {
 };
 
 describe("managed CLI lifecycle", () => {
+  it("fails closed on unsupported platforms but leaves help and version available", async () => {
+    const project = await makeTree({ "README.md": "Project" });
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    try {
+      await expect(invoke(project, ["list"])).rejects.toThrow("requires Linux");
+      const help = await invoke(project, ["help", "--json"]);
+      const version = await invoke(project, ["version", "--json"]);
+      expect(help.exitCode).toBe(0);
+      expect(version.exitCode).toBe(0);
+    } finally {
+      platform.mockRestore();
+    }
+  });
   it("returns machine-readable help without reading a package", async () => {
     const project = await makeTree({ "README.md": "Project" });
     const result = await invoke(project, ["help", "--json"]);
