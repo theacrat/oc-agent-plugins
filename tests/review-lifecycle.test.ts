@@ -103,4 +103,50 @@ describe("reviewed style lifecycle", () => {
       ),
     ).rejects.toThrow("Only one active plugin");
   });
+
+  it("never marks a session initialised when selection fails", async () => {
+    let prompt: ((event: { sessionID: string }) => void) | undefined;
+    const ctx = {
+      event: {
+        async *subscribe() {
+          await Promise.resolve();
+          yield* [];
+        },
+      },
+      session: {
+        hook: async (_name: string, handler: (event: { sessionID: string }) => void) => {
+          await Promise.resolve();
+          prompt = handler;
+          return { dispose };
+        },
+      },
+    };
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- minimal native lifecycle test interface
+    const native = ctx as unknown as Plugin.Context;
+    const selection = vi.fn<() => void>(() => {
+      throw new Error("selection failed");
+    });
+    const scoped = new Set<string>();
+    const runtime = {
+      clearSession: vi.fn<() => void>(),
+      dispose,
+      replace: vi.fn<() => void>(),
+      select: selection,
+    };
+    const cleanup = await setupCompatibilityLifecycle(
+      native,
+      options({}),
+      scoped,
+      runtime,
+      runtime,
+      () => result(),
+      () => new Map(),
+      vi.fn<() => void>(),
+    );
+    expect(() => prompt?.({ sessionID: "s" })).toThrow("selection failed");
+    expect(() => prompt?.({ sessionID: "s" })).toThrow("selection failed");
+    expect(scoped.has("s")).toBe(false);
+    expect(selection).toHaveBeenCalledTimes(2);
+    await cleanup();
+  });
 });

@@ -142,11 +142,16 @@ describe("output styles", () => {
           path: path.join(root, "custom", "chosen.md"),
         },
       ]);
-      await expect(
-        loadOutputStyles(root, "./custom", vi.fn<() => void>(), () => {
-          throw new Error("sensitive body reference");
-        }),
-      ).rejects.toThrow("sensitive");
+      const reportExpansion = vi.fn<(entry: unknown) => void>();
+      const invalid = await loadOutputStyles(root, "./custom", reportExpansion, () => {
+        throw new Error("sensitive body reference");
+      });
+      expect(invalid).toEqual([]);
+      expect(reportExpansion).toHaveBeenCalledWith({
+        message: "output style body configuration expansion failed",
+        severity: "error",
+        source: "custom/chosen.md",
+      });
     } finally {
       await rm(root, { force: true, recursive: true });
     }
